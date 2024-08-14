@@ -123,6 +123,7 @@ abstract class GoRouteData extends RouteData {
       routes: routes,
       parentNavigatorKey: parentNavigatorKey,
       onExit: onExit,
+      internalTypedRouteDataFactory: factoryImpl,
     );
   }
 
@@ -216,6 +217,7 @@ abstract class ShellRouteData extends RouteData {
       observers: observers,
       restorationScopeId: restorationScopeId,
       redirect: redirect,
+      internalTypedRouteDataFactory: factoryImpl,
     );
   }
 
@@ -307,6 +309,7 @@ abstract class StatefulShellRouteData extends RouteData {
         parentNavigatorKey: parentNavigatorKey,
         restorationScopeId: restorationScopeId,
         redirect: redirect,
+        internalTypedRouteDataFactory: factoryImpl,
       );
     }
     return StatefulShellRoute.indexedStack(
@@ -316,6 +319,7 @@ abstract class StatefulShellRouteData extends RouteData {
       parentNavigatorKey: parentNavigatorKey,
       restorationScopeId: restorationScopeId,
       redirect: redirect,
+      internalTypedRouteDataFactory: factoryImpl,
     );
   }
 
