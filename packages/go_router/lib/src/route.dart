@@ -12,6 +12,7 @@ import 'package:meta/meta.dart';
 import 'configuration.dart';
 import 'match.dart';
 import 'path_utils.dart';
+import 'route_data.dart';
 import 'router.dart';
 import 'state.dart';
 
@@ -223,6 +224,9 @@ abstract class RouteBase with Diagnosticable {
   /// Navigator instead of the nearest ShellRoute ancestor.
   final GlobalKey<NavigatorState>? parentNavigatorKey;
 
+  /// Return the typed `RouteData` for this route (if this route supports it).
+  RouteData? routeDataForState(GoRouterState state);
+
   /// Builds a lists containing the provided routes along with all their
   /// descendant [routes].
   static Iterable<RouteBase> routesRecursively(Iterable<RouteBase> routes) {
@@ -269,12 +273,14 @@ class GoRoute extends RouteBase {
     super.redirect,
     this.onExit,
     super.routes = const <RouteBase>[],
+    GoRouteData Function(GoRouterState)? internalTypedRouteDataFactory,
   })  : assert(path.isNotEmpty, 'GoRoute path cannot be empty'),
         assert(name == null || name.isNotEmpty, 'GoRoute name cannot be empty'),
         assert(pageBuilder != null || builder != null || redirect != null,
             'builder, pageBuilder, or redirect must be provided'),
         assert(onExit == null || pageBuilder != null || builder != null,
             'if onExit is provided, one of pageBuilder or builder must be provided'),
+        _routeDataFactory = internalTypedRouteDataFactory,
         super._() {
     // cache the path regexp and parameters
     _pathRE = patternToRegExp(path, pathParameters);
@@ -429,6 +435,17 @@ class GoRoute extends RouteBase {
   /// );
   /// ```
   final ExitCallback? onExit;
+
+  @override
+  GoRouteData? routeDataForState(GoRouterState state) {
+    if (_routeDataFactory == null) {
+      return null;
+    }
+    return _routeDataFactory(state);
+  }
+
+  // Constructs a GoRouteData for this route
+  final GoRouteData Function(GoRouterState)? _routeDataFactory;
 
   // TODO(chunhtai): move all regex related help methods to path_utils.dart.
   /// Match this route against a location.
@@ -636,8 +653,10 @@ class ShellRoute extends ShellRouteBase {
     super.parentNavigatorKey,
     GlobalKey<NavigatorState>? navigatorKey,
     this.restorationScopeId,
+    ShellRouteData Function(GoRouterState)? internalTypedRouteDataFactory,
   })  : assert(routes.isNotEmpty),
         navigatorKey = navigatorKey ?? GlobalKey<NavigatorState>(),
+        _routeDataFactory = internalTypedRouteDataFactory,
         super._() {
     assert(() {
       ShellRouteBase._debugCheckSubRouteParentNavigatorKeys(
@@ -661,6 +680,17 @@ class ShellRoute extends ShellRouteBase {
   /// matching sub-routes. Typically, a shell route builds its shell around this
   /// Widget.
   final ShellRoutePageBuilder? pageBuilder;
+
+  @override
+  ShellRouteData? routeDataForState(GoRouterState state) {
+    if (_routeDataFactory == null) {
+      return null;
+    }
+    return _routeDataFactory(state);
+  }
+
+  // Constructs a GoRouteData for this route
+  final ShellRouteData Function(GoRouterState)? _routeDataFactory;
 
   @override
   Widget? buildWidget(BuildContext context, GoRouterState state,
@@ -797,6 +827,7 @@ class StatefulShellRoute extends ShellRouteBase {
     required this.navigatorContainerBuilder,
     super.parentNavigatorKey,
     this.restorationScopeId,
+    StatefulShellRouteData Function(GoRouterState)? internalTypedRouteDataFactory,
   })  : assert(branches.isNotEmpty),
         assert((pageBuilder != null) || (builder != null),
             'One of builder or pageBuilder must be provided'),
@@ -804,6 +835,7 @@ class StatefulShellRoute extends ShellRouteBase {
             'Navigator keys must be unique'),
         assert(_debugValidateParentNavigatorKeys(branches)),
         assert(_debugValidateRestorationScopeIds(restorationScopeId, branches)),
+        _routeDataFactory = internalTypedRouteDataFactory,
         super._(routes: _routes(branches));
 
   /// Constructs a StatefulShellRoute that uses an [IndexedStack] for its
@@ -823,6 +855,7 @@ class StatefulShellRoute extends ShellRouteBase {
     GlobalKey<NavigatorState>? parentNavigatorKey,
     StatefulShellRoutePageBuilder? pageBuilder,
     String? restorationScopeId,
+    StatefulShellRouteData Function(GoRouterState)? internalTypedRouteDataFactory,
   }) : this(
           branches: branches,
           redirect: redirect,
@@ -831,6 +864,7 @@ class StatefulShellRoute extends ShellRouteBase {
           parentNavigatorKey: parentNavigatorKey,
           restorationScopeId: restorationScopeId,
           navigatorContainerBuilder: _indexedStackContainerBuilder,
+          internalTypedRouteDataFactory: internalTypedRouteDataFactory,
         );
 
   /// Restoration ID to save and restore the state of the navigator, including
@@ -885,6 +919,17 @@ class StatefulShellRoute extends ShellRouteBase {
   /// Each branch uses a separate [Navigator], identified
   /// [StatefulShellBranch.navigatorKey].
   final List<StatefulShellBranch> branches;
+
+  @override
+  StatefulShellRouteData? routeDataForState(GoRouterState state) {
+    if (_routeDataFactory == null) {
+      return null;
+    }
+    return _routeDataFactory(state);
+  }
+
+  // Constructs a GoRouteData for this route
+  final StatefulShellRouteData Function(GoRouterState)? _routeDataFactory;
 
   final GlobalKey<StatefulNavigationShellState> _shellStateKey =
       GlobalKey<StatefulNavigationShellState>();
