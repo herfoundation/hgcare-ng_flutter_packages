@@ -187,7 +187,7 @@ class FakeStoreKitPlatform implements TestInAppPurchaseApi {
   }
 
   @override
-  List<SKPaymentTransactionMessage?> transactions() {
+  List<SKPaymentTransactionMessage> transactions() {
     throw UnimplementedError();
   }
 
@@ -280,12 +280,17 @@ class FakeStoreKitPlatform implements TestInAppPurchaseApi {
   void stopObservingPaymentQueue() {
     queueIsActive = false;
   }
+
+  @override
+  bool supportsStoreKit2() {
+    return true;
+  }
 }
 
 class FakeStoreKit2Platform implements TestInAppPurchase2Api {
   late Set<String> validProductIDs;
   late Map<String, SK2Product> validProducts;
-  late List<SK2TransactionMessage> transactionList;
+  late List<SK2TransactionMessage> transactionList = <SK2TransactionMessage>[];
   late bool testTransactionFail;
   late int testTransactionCancel;
   late List<SK2Transaction> finishedTransactions;
@@ -310,13 +315,25 @@ class FakeStoreKit2Platform implements TestInAppPurchase2Api {
     }
   }
 
+  SK2TransactionMessage createRestoredTransaction(
+      String productId, String transactionId,
+      {int quantity = 1}) {
+    return SK2TransactionMessage(
+        id: 123,
+        originalId: 321,
+        productId: '',
+        purchaseDate: '',
+        appAccountToken: '',
+        restoring: true);
+  }
+
   @override
   bool canMakePayments() {
     return true;
   }
 
   @override
-  Future<List<SK2ProductMessage?>> products(List<String?> identifiers) {
+  Future<List<SK2ProductMessage>> products(List<String?> identifiers) {
     if (queryProductException != null) {
       throw queryProductException!;
     }
@@ -327,12 +344,12 @@ class FakeStoreKit2Platform implements TestInAppPurchase2Api {
         products.add(validProducts[productID]!);
       }
     }
-    final List<SK2ProductMessage?> result = <SK2ProductMessage?>[];
+    final List<SK2ProductMessage> result = <SK2ProductMessage>[];
     for (final SK2Product p in products) {
       result.add(p.convertToPigeon());
     }
 
-    return Future<List<SK2ProductMessage?>>.value(result);
+    return Future<List<SK2ProductMessage>>.value(result);
   }
 
   @override
@@ -340,8 +357,8 @@ class FakeStoreKit2Platform implements TestInAppPurchase2Api {
       {SK2ProductPurchaseOptionsMessage? options}) {
     final SK2TransactionMessage transaction = createPendingTransaction(id);
 
-    InAppPurchaseStoreKitPlatform.sk2transactionObserver
-        .onTransactionsUpdated(transaction);
+    InAppPurchaseStoreKitPlatform.sk2TransactionObserver
+        .onTransactionsUpdated(<SK2TransactionMessage>[transaction]);
     return Future<SK2ProductPurchaseResultMessage>.value(
         SK2ProductPurchaseResultMessage.success);
   }
@@ -352,8 +369,8 @@ class FakeStoreKit2Platform implements TestInAppPurchase2Api {
   }
 
   @override
-  Future<List<SK2TransactionMessage?>> transactions() {
-    return Future<List<SK2TransactionMessage?>>.value(<SK2TransactionMessage?>[
+  Future<List<SK2TransactionMessage>> transactions() {
+    return Future<List<SK2TransactionMessage>>.value(<SK2TransactionMessage>[
       SK2TransactionMessage(
           id: 123,
           originalId: 123,
@@ -370,6 +387,12 @@ class FakeStoreKit2Platform implements TestInAppPurchase2Api {
   @override
   void stopListeningToTransactions() {
     isListenerRegistered = false;
+  }
+
+  @override
+  Future<void> restorePurchases() async {
+    InAppPurchaseStoreKitPlatform.sk2TransactionObserver
+        .onTransactionsUpdated(transactionList);
   }
 }
 

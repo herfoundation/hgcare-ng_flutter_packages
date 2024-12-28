@@ -69,9 +69,7 @@ class SK2SubscriptionInfoMessage {
   });
 
   /// An array of all the promotional offers configured for this subscription.
-  /// This should be List<SK2SubscriptionOfferMessage> but pigeon doesnt support
-  /// null-safe generics. https://github.com/flutter/flutter/issues/97848
-  final List<SK2SubscriptionOfferMessage?> promotionalOffers;
+  final List<SK2SubscriptionOfferMessage> promotionalOffers;
 
   /// The group identifier for this subscription.
   final String subscriptionGroupID;
@@ -143,17 +141,21 @@ class SK2TransactionMessage {
       required this.originalId,
       required this.productId,
       required this.purchaseDate,
+      this.expirationDate,
       this.purchasedQuantity = 1,
       this.appAccountToken,
       this.error,
+      this.receiptData,
       this.restoring = false});
   final int id;
   final int originalId;
   final String productId;
   final String purchaseDate;
+  final String? expirationDate;
   final int purchasedQuantity;
   final String? appAccountToken;
   final bool restoring;
+  final String? receiptData;
   final SK2ErrorMessage? error;
 }
 
@@ -163,7 +165,7 @@ class SK2ErrorMessage {
 
   final int code;
   final String domain;
-  final Map<String?, Object?>? userInfo;
+  final Map<String, Object>? userInfo;
 }
 
 enum SK2ProductPurchaseResultMessage { success, userCancelled, pending }
@@ -191,9 +193,12 @@ abstract class InAppPurchase2API {
   void startListeningToTransactions();
 
   void stopListeningToTransactions();
+
+  @async
+  void restorePurchases();
 }
 
 @FlutterApi()
 abstract class InAppPurchase2CallbackAPI {
-  void onTransactionsUpdated(SK2TransactionMessage newTransaction);
+  void onTransactionsUpdated(List<SK2TransactionMessage> newTransactions);
 }

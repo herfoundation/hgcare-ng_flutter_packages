@@ -11,7 +11,7 @@ import StoreKit
   import FlutterMacOS
 #endif
 
-public class InAppPurchasePlugin: NSObject, FlutterPlugin, InAppPurchaseAPI {
+public class InAppPurchasePlugin: NSObject, FlutterPlugin, FIAInAppPurchaseAPI {
   private let receiptManager: FIAPReceiptManager
   private var productsCache: NSMutableDictionary = [:]
   private var paymentQueueDelegateCallbackChannel: FlutterMethodChannel?
@@ -55,7 +55,7 @@ public class InAppPurchasePlugin: NSObject, FlutterPlugin, InAppPurchaseAPI {
     let instance = InAppPurchasePlugin(registrar: registrar)
     registrar.addMethodCallDelegate(instance, channel: channel)
     registrar.addApplicationDelegate(instance)
-    SetUpInAppPurchaseAPI(messenger, instance)
+    SetUpFIAInAppPurchaseAPI(messenger, instance)
     if #available(iOS 15.0, macOS 12.0, *) {
       InAppPurchase2APISetup.setUp(binaryMessenger: messenger, api: instance)
     }
@@ -120,7 +120,7 @@ public class InAppPurchasePlugin: NSObject, FlutterPlugin, InAppPurchaseAPI {
   }
 
   public func transactionsWithError(_ error: AutoreleasingUnsafeMutablePointer<FlutterError?>)
-    -> [SKPaymentTransactionMessage]?
+    -> [FIASKPaymentTransactionMessage]?
   {
     return getPaymentQueueHandler()
       .getUnfinishedTransactions()
@@ -130,7 +130,7 @@ public class InAppPurchasePlugin: NSObject, FlutterPlugin, InAppPurchaseAPI {
   }
 
   public func storefrontWithError(_ error: AutoreleasingUnsafeMutablePointer<FlutterError?>)
-    -> SKStorefrontMessage?
+    -> FIASKStorefrontMessage?
   {
     if #available(iOS 13.0, *), let storefront = getPaymentQueueHandler().storefront {
       return FIAObjectTranslator.convertStorefront(toPigeon: storefront)
@@ -140,7 +140,7 @@ public class InAppPurchasePlugin: NSObject, FlutterPlugin, InAppPurchaseAPI {
 
   public func startProductRequestProductIdentifiers(
     _ productIdentifiers: [String],
-    completion: @escaping (SKProductsResponseMessage?, FlutterError?) -> Void
+    completion: @escaping (FIASKProductsResponseMessage?, FlutterError?) -> Void
   ) {
     let request = getProductRequest(withIdentifiers: Set(productIdentifiers))
     let handler = handlerFactory(request)
@@ -253,16 +253,25 @@ public class InAppPurchasePlugin: NSObject, FlutterPlugin, InAppPurchaseAPI {
     let pendingTransactions = getPaymentQueueHandler().getUnfinishedTransactions()
 
     for transaction in pendingTransactions {
-      // If the user cancels the purchase dialog we won't have a transactionIdentifier.
-      // So if it is null AND a transaction in the pendingTransactions list has
-      // also a null transactionIdentifier we check for equal product identifiers.
-      if transaction.transactionIdentifier == transactionIdentifier
-        || (transactionIdentifier == nil
-          && transaction.transactionIdentifier == nil
-          && transaction.payment.productIdentifier == productIdentifier)
-      {
-        getPaymentQueueHandler().finish(transaction)
+      // finishTransaction() cannot be called on a Transaction with a current purchasing state
+      // https://developer.apple.com/documentation/storekit/skpaymentqueue/1506003-finishtransaction
+      guard transaction.transactionState != SKPaymentTransactionState.purchasing else {
+        continue
       }
+
+      // If the user cancels the purchase dialog we won't have a transactionIdentifier.
+      // So if transactionIdentifier is null AND a transaction in the pendingTransactions list
+      // also has a null transactionIdentifier, we check for equal product identifiers.
+      // TODO(louisehsu): See if we can check for SKErrorPaymentCancelled instead.
+      let matchesTransactionIdentifier = transaction.transactionIdentifier == transactionIdentifier
+      let isCancelledTransaction =
+        transactionIdentifier == nil && transaction.transactionIdentifier == nil
+        && transaction.payment.productIdentifier == productIdentifier
+
+      guard matchesTransactionIdentifier || isCancelledTransaction else {
+        continue
+      }
+      getPaymentQueueHandler().finish(transaction)
     }
   }
 
@@ -409,6 +418,15 @@ public class InAppPurchasePlugin: NSObject, FlutterPlugin, InAppPurchaseAPI {
 
   public func updatedDownloads() {
     NSLog("Received an updatedDownloads callback, but downloads are not supported.")
+  }
+
+  public func supportsStoreKit2WithError(_ error: AutoreleasingUnsafeMutablePointer<FlutterError?>)
+    -> NSNumber?
+  {
+    if #available(iOS 15.0, macOS 12.0, *) {
+      return true
+    }
+    return false
   }
 
   // MARK: - Methods exposed for testing
