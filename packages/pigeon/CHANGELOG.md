@@ -1,3 +1,15 @@
+## 22.7.4
+
+* [dart] Fixes bug with multi-instance event channel support.
+
+## 22.7.3
+
+* Adds compatibility with `analyzer` 7.x.*.
+
+## 22.7.2
+
+* Updates README to discuss best practices for using Pigeon-generated code.
+
 ## 22.7.1
 
 * [swift] Adds support for platform checks of imports of ProxyApis.
