@@ -1,13 +1,13 @@
-// Copyright 2013 The Flutter Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 import 'package:args/command_runner.dart';
 import 'package:file/file.dart';
-import 'package:file/memory.dart';
 import 'package:flutter_plugin_tools/src/common/core.dart';
 import 'package:flutter_plugin_tools/src/common/plugin_utils.dart';
 import 'package:flutter_plugin_tools/src/gradle_check_command.dart';
+import 'package:git/git.dart';
 import 'package:test/test.dart';
 
 import 'util.dart';
@@ -16,19 +16,20 @@ const String _defaultFakeNamespace = 'dev.flutter.foo';
 
 void main() {
   late CommandRunner<void> runner;
-  late FileSystem fileSystem;
   late Directory packagesDir;
+  const javaIncompatabilityIndicator =
+      'build.gradle(.kts) must set an explicit Java compatibility version.';
 
   setUp(() {
-    fileSystem = MemoryFileSystem();
-    packagesDir = fileSystem.currentDirectory.childDirectory('packages');
-    createPackagesDirectory(parentDir: packagesDir.parent);
-    final GradleCheckCommand command = GradleCheckCommand(
-      packagesDir,
-    );
+    final GitDir gitDir;
+    (:packagesDir, processRunner: _, gitProcessRunner: _, :gitDir) =
+        configureBaseCommandMocks();
+    final command = GradleCheckCommand(packagesDir, gitDir: gitDir);
 
     runner = CommandRunner<void>(
-        'gradle_check_command', 'Test for gradle_check_command');
+      'gradle_check_command',
+      'Test for gradle_check_command',
+    );
     runner.addCommand(command);
   });
 
@@ -43,21 +44,30 @@ void main() {
     bool includeNamespace = true,
     bool commentNamespace = false,
     bool warningsConfigured = true,
+    bool useDeprecatedCompileSdkVersion = false,
+    bool usePropertyAssignment = true,
+    String compileSdk = '36',
+    bool includeKotlinOptions = true,
+    bool commentKotlinOptions = false,
+    bool useDeprecatedJvmTargetStyle = false,
+    int jvmTargetValue = 17,
+    int kotlinJvmValue = 17,
   }) {
     final File buildGradle = package
         .platformDirectory(FlutterPlatform.android)
         .childFile('build.gradle');
     buildGradle.createSync(recursive: true);
 
-    const String warningConfig = '''
+    const warningConfig = '''
     lintOptions {
-        checkAllWarnings true
-        warningsAsErrors true
+        checkAllWarnings = true
+        warningsAsErrors = true
         disable 'AndroidGradlePluginVersion', 'InvalidPackage', 'GradleDependency', 'NewerVersionAvailable'
         baseline file("lint-baseline.xml")
     }
 ''';
-    final String javaSection = '''
+    final javaSection =
+        '''
 java {
     toolchain {
         ${commentSourceLanguage ? '// ' : ''}languageVersion = JavaLanguageVersion.of(8)
@@ -65,12 +75,20 @@ java {
 }
 
 ''';
-    final String sourceCompat =
-        '${commentSourceLanguage ? '// ' : ''}sourceCompatibility JavaVersion.VERSION_11';
-    final String targetCompat =
-        '${commentSourceLanguage ? '// ' : ''}targetCompatibility JavaVersion.VERSION_11';
-    final String namespace =
-        "    ${commentNamespace ? '// ' : ''}namespace '$_defaultFakeNamespace'";
+    final sourceCompat =
+        '${commentSourceLanguage ? '// ' : ''}sourceCompatibility = JavaVersion.VERSION_$jvmTargetValue';
+    final targetCompat =
+        '${commentSourceLanguage ? '// ' : ''}targetCompatibility = JavaVersion.VERSION_$jvmTargetValue';
+    final namespace =
+        "    ${commentNamespace ? '// ' : ''}namespace = '$_defaultFakeNamespace'";
+    final kotlinJvmTarget = useDeprecatedJvmTargetStyle
+        ? '$jvmTargetValue'
+        : 'JavaVersion.VERSION_$kotlinJvmValue.toString()';
+    final kotlinConfig =
+        '''
+    ${commentKotlinOptions ? '//' : ''}kotlinOptions {
+        ${commentKotlinOptions ? '//' : ''}jvmTarget = $kotlinJvmTarget
+    ${commentKotlinOptions ? '//' : ''}}''';
 
     buildGradle.writeAsStringSync('''
 group 'dev.flutter.plugins.fake'
@@ -88,16 +106,17 @@ apply plugin: 'com.android.library'
 ${includeLanguageVersion ? javaSection : ''}
 android {
 ${includeNamespace ? namespace : ''}
-    compileSdk 33
+    ${useDeprecatedCompileSdkVersion ? 'compileSdkVersion' : 'compileSdk'} ${usePropertyAssignment ? '=' : ''} $compileSdk
 
     defaultConfig {
-        minSdkVersion 30
+        minSdk ${usePropertyAssignment ? '=' : ''} 30
     }
 ${warningsConfigured ? warningConfig : ''}
     compileOptions {
         ${includeSourceCompat ? sourceCompat : ''}
         ${includeTargetCompat ? targetCompat : ''}
     }
+    ${includeKotlinOptions ? kotlinConfig : ''}
     testOptions {
         unitTests.includeAndroidResources = true
     }
@@ -123,7 +142,8 @@ dependencies {
         .childFile('build.gradle');
     buildGradle.createSync(recursive: true);
 
-    final String warningConfig = '''
+    final warningConfig =
+        '''
 gradle.projectsEvaluated {
     project(":$pluginName") {
         tasks.withType(JavaCompile) {
@@ -183,7 +203,7 @@ ${warningsConfigured ? warningConfig : ''}
 
     /// String printed as a valid example of settings.gradle repository
     /// configuration without the artifact hub env variable.
-    const String exampleSettingsWithoutArtifactHubString = '''
+    const exampleSettingsWithoutArtifactHubString = '''
 plugins {
     id "dev.flutter.flutter-plugin-loader" version "1.0.0"
     // ...other plugins
@@ -222,6 +242,7 @@ include ":app"
     required bool includeNamespace,
     required bool commentNamespace,
     required bool includeNameSpaceAsDeclaration,
+    required bool usePropertyAssignment,
   }) {
     final File buildGradle = package
         .platformDirectory(FlutterPlatform.android)
@@ -229,7 +250,7 @@ include ":app"
         .childFile('build.gradle');
     buildGradle.createSync(recursive: true);
 
-    final String namespace =
+    final namespace =
         "${commentNamespace ? '// ' : ''}namespace ${includeNameSpaceAsDeclaration ? '= ' : ''}'$_defaultFakeNamespace'";
     buildGradle.writeAsStringSync('''
 def flutterRoot = localProperties.getProperty('flutter.sdk')
@@ -242,7 +263,7 @@ apply from: "\$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
 
 android {
     ${includeNamespace ? namespace : ''}
-    compileSdk flutter.compileSdkVersion
+    compileSdk ${usePropertyAssignment ? '=' : ''} flutter.compileSdkVersion
 
     lintOptions {
         disable 'InvalidPackage'
@@ -260,7 +281,7 @@ flutter {
 }
 
 dependencies {
-    testImplementation 'fake.package:fake:1.0.0'
+    testImplementation("fake.package:fake:1.0.0")
 }
 ''');
   }
@@ -270,12 +291,13 @@ dependencies {
     required String pluginName,
     bool includeNamespace = true,
     bool commentNamespace = false,
-    bool includeNameSpaceAsDeclaration = false,
+    bool includeNameSpaceAsDeclaration = true,
     bool warningsConfigured = true,
     String? kotlinVersion,
     bool includeBuildArtifactHub = true,
     bool includeSettingsArtifactHub = true,
     bool includeSettingsDocumentationArtifactHub = true,
+    bool usePropertyAssignment = true,
   }) {
     writeFakeExampleTopLevelBuildGradle(
       package,
@@ -284,10 +306,13 @@ dependencies {
       kotlinVersion: kotlinVersion,
       includeArtifactHub: includeBuildArtifactHub,
     );
-    writeFakeExampleAppBuildGradle(package,
-        includeNamespace: includeNamespace,
-        commentNamespace: commentNamespace,
-        includeNameSpaceAsDeclaration: includeNameSpaceAsDeclaration);
+    writeFakeExampleAppBuildGradle(
+      package,
+      includeNamespace: includeNamespace,
+      commentNamespace: commentNamespace,
+      includeNameSpaceAsDeclaration: includeNameSpaceAsDeclaration,
+      usePropertyAssignment: usePropertyAssignment,
+    );
     writeFakeExampleSettingsGradle(
       package,
       includeArtifactHub: includeSettingsArtifactHub,
@@ -300,10 +325,12 @@ dependencies {
     bool isApp = false,
     String packageName = _defaultFakeNamespace,
   }) {
-    final Directory androidDir =
-        package.platformDirectory(FlutterPlatform.android);
-    final Directory startDir =
-        isApp ? androidDir.childDirectory('app') : androidDir;
+    final Directory androidDir = package.platformDirectory(
+      FlutterPlatform.android,
+    );
+    final Directory startDir = isApp
+        ? androidDir.childDirectory('app')
+        : androidDir;
     final File manifest = startDir
         .childDirectory('src')
         .childDirectory('main')
@@ -318,73 +345,161 @@ dependencies {
   test('skips when package has no Android directory', () async {
     createFakePackage('a_package', packagesDir, examples: <String>[]);
 
-    final List<String> output =
-        await runCapturingPrint(runner, <String>['gradle-check']);
+    final List<String> output = await runCapturingPrint(runner, <String>[
+      'gradle-check',
+    ]);
 
     expect(
       output,
-      containsAllInOrder(<Matcher>[
-        contains('Skipped 1 package(s)'),
-      ]),
+      containsAllInOrder(<Matcher>[contains('Skipped 1 package(s)')]),
     );
   });
 
   test('fails when build.gradle has no java compatibility version', () async {
-    final RepositoryPackage package =
-        createFakePlugin('a_plugin', packagesDir, examples: <String>[]);
+    final RepositoryPackage package = createFakePlugin(
+      'a_plugin',
+      packagesDir,
+      examples: <String>[],
+    );
     writeFakePluginBuildGradle(package);
     writeFakeManifest(package);
 
     Error? commandError;
     final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
+      runner,
+      <String>['gradle-check'],
+      errorHandler: (Error e) {
+        commandError = e;
+      },
+    );
 
     expect(commandError, isA<ToolExit>());
     expect(
       output,
-      containsAllInOrder(<Matcher>[
-        contains(
-            'build.gradle must set an explicit Java compatibility version.'),
-      ]),
+      containsAllInOrder(<Matcher>[contains(javaIncompatabilityIndicator)]),
     );
   });
 
   test(
-      'fails when sourceCompatibility is provided with out targetCompatibility',
-      () async {
-    final RepositoryPackage package =
-        createFakePlugin('a_plugin', packagesDir, examples: <String>[]);
-    writeFakePluginBuildGradle(package, includeSourceCompat: true);
+    'fails when sourceCompatibility is provided with out targetCompatibility',
+    () async {
+      final RepositoryPackage package = createFakePlugin(
+        'a_plugin',
+        packagesDir,
+        examples: <String>[],
+      );
+      writeFakePluginBuildGradle(package, includeSourceCompat: true);
+      writeFakeManifest(package);
+
+      Error? commandError;
+      final List<String> output = await runCapturingPrint(
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
+      );
+
+      expect(commandError, isA<ToolExit>());
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[contains(javaIncompatabilityIndicator)]),
+      );
+    },
+  );
+
+  test(
+    'fails when sourceCompatibility/targetCompatibility are below minimum',
+    () async {
+      final RepositoryPackage package = createFakePlugin(
+        'a_plugin',
+        packagesDir,
+        examples: <String>[],
+      );
+      writeFakePluginBuildGradle(
+        package,
+        includeSourceCompat: true,
+        includeTargetCompat: true,
+        jvmTargetValue: 11,
+        kotlinJvmValue: 11,
+      );
+      writeFakeManifest(package);
+
+      Error? commandError;
+      final List<String> output = await runCapturingPrint(
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
+      );
+
+      expect(commandError, isA<ToolExit>());
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains(
+            'Which is below the minimum required. Use at least "JavaVersion.VERSION_',
+          ),
+        ]),
+      );
+    },
+  );
+
+  test('fails when compatibility values do not match kotlinOptions', () async {
+    final RepositoryPackage package = createFakePlugin(
+      'a_plugin',
+      packagesDir,
+      examples: <String>[],
+    );
+    writeFakePluginBuildGradle(
+      package,
+      includeSourceCompat: true,
+      includeTargetCompat: true,
+      jvmTargetValue: 21,
+      // ignore: avoid_redundant_argument_values
+      kotlinJvmValue: 17,
+    );
     writeFakeManifest(package);
 
     Error? commandError;
     final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
+      runner,
+      <String>['gradle-check'],
+      errorHandler: (Error e) {
+        commandError = e;
+      },
+    );
 
     expect(commandError, isA<ToolExit>());
     expect(
       output,
       containsAllInOrder(<Matcher>[
         contains(
-            'build.gradle must set an explicit Java compatibility version.'),
+          'If build.gradle(.kts) uses JavaVersion.* versions must be the same.',
+        ),
       ]),
     );
   });
 
-  test('passes when sourceCompatibility and targetCompatibility are specified',
-      () async {
-    final RepositoryPackage package =
-        createFakePlugin('a_plugin', packagesDir, examples: <String>[]);
-    writeFakePluginBuildGradle(package,
-        includeSourceCompat: true, includeTargetCompat: true);
+  test('passes when jvmValues are higher than minimim', () async {
+    final RepositoryPackage package = createFakePlugin(
+      'a_plugin',
+      packagesDir,
+      examples: <String>[],
+    );
+    writeFakePluginBuildGradle(
+      package,
+      includeSourceCompat: true,
+      includeTargetCompat: true,
+      jvmTargetValue: 21,
+      kotlinJvmValue: 21,
+    );
     writeFakeManifest(package);
 
-    final List<String> output =
-        await runCapturingPrint(runner, <String>['gradle-check']);
+    final List<String> output = await runCapturingPrint(runner, <String>[
+      'gradle-check',
+    ]);
 
     expect(
       output,
@@ -394,14 +509,46 @@ dependencies {
     );
   });
 
+  test(
+    'passes when sourceCompatibility and targetCompatibility are specified',
+    () async {
+      final RepositoryPackage package = createFakePlugin(
+        'a_plugin',
+        packagesDir,
+        examples: <String>[],
+      );
+      writeFakePluginBuildGradle(
+        package,
+        includeSourceCompat: true,
+        includeTargetCompat: true,
+      );
+      writeFakeManifest(package);
+
+      final List<String> output = await runCapturingPrint(runner, <String>[
+        'gradle-check',
+      ]);
+
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains('Validating android/build.gradle'),
+        ]),
+      );
+    },
+  );
+
   test('passes when toolchain languageVersion is specified', () async {
-    final RepositoryPackage package =
-        createFakePlugin('a_plugin', packagesDir, examples: <String>[]);
+    final RepositoryPackage package = createFakePlugin(
+      'a_plugin',
+      packagesDir,
+      examples: <String>[],
+    );
     writeFakePluginBuildGradle(package, includeLanguageVersion: true);
     writeFakeManifest(package);
 
-    final List<String> output =
-        await runCapturingPrint(runner, <String>['gradle-check']);
+    final List<String> output = await runCapturingPrint(runner, <String>[
+      'gradle-check',
+    ]);
 
     expect(
       output,
@@ -412,7 +559,7 @@ dependencies {
   });
 
   test('does not require java version in examples', () async {
-    const String pluginName = 'a_plugin';
+    const pluginName = 'a_plugin';
     final RepositoryPackage package = createFakePlugin(pluginName, packagesDir);
     writeFakePluginBuildGradle(package, includeLanguageVersion: true);
     writeFakeManifest(package);
@@ -420,8 +567,9 @@ dependencies {
     writeFakeExampleBuildGradles(example, pluginName: pluginName);
     writeFakeManifest(example, isApp: true);
 
-    final List<String> output =
-        await runCapturingPrint(runner, <String>['gradle-check']);
+    final List<String> output = await runCapturingPrint(runner, <String>[
+      'gradle-check',
+    ]);
 
     expect(
       output,
@@ -433,88 +581,117 @@ dependencies {
   });
 
   test('fails when java compatibility version is commented out', () async {
-    final RepositoryPackage package =
-        createFakePlugin('a_plugin', packagesDir, examples: <String>[]);
-    writeFakePluginBuildGradle(package,
-        includeSourceCompat: true,
-        includeTargetCompat: true,
-        commentSourceLanguage: true);
+    final RepositoryPackage package = createFakePlugin(
+      'a_plugin',
+      packagesDir,
+      examples: <String>[],
+    );
+    writeFakePluginBuildGradle(
+      package,
+      includeSourceCompat: true,
+      includeTargetCompat: true,
+      commentSourceLanguage: true,
+    );
     writeFakeManifest(package);
 
     Error? commandError;
     final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
+      runner,
+      <String>['gradle-check'],
+      errorHandler: (Error e) {
+        commandError = e;
+      },
+    );
 
     expect(commandError, isA<ToolExit>());
     expect(
       output,
-      containsAllInOrder(<Matcher>[
-        contains(
-            'build.gradle must set an explicit Java compatibility version.'),
-      ]),
+      containsAllInOrder(<Matcher>[contains(javaIncompatabilityIndicator)]),
     );
   });
 
   test('fails when languageVersion is commented out', () async {
-    final RepositoryPackage package =
-        createFakePlugin('a_plugin', packagesDir, examples: <String>[]);
-    writeFakePluginBuildGradle(package,
-        includeLanguageVersion: true, commentSourceLanguage: true);
+    final RepositoryPackage package = createFakePlugin(
+      'a_plugin',
+      packagesDir,
+      examples: <String>[],
+    );
+    writeFakePluginBuildGradle(
+      package,
+      includeLanguageVersion: true,
+      commentSourceLanguage: true,
+    );
     writeFakeManifest(package);
 
     Error? commandError;
     final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
+      runner,
+      <String>['gradle-check'],
+      errorHandler: (Error e) {
+        commandError = e;
+      },
+    );
 
     expect(commandError, isA<ToolExit>());
     expect(
       output,
-      containsAllInOrder(<Matcher>[
-        contains(
-            'build.gradle must set an explicit Java compatibility version.'),
-      ]),
+      containsAllInOrder(<Matcher>[contains(javaIncompatabilityIndicator)]),
     );
   });
 
-  test('fails when plugin namespace does not match AndroidManifest.xml',
-      () async {
-    final RepositoryPackage package =
-        createFakePlugin('a_plugin', packagesDir, examples: <String>[]);
-    writeFakePluginBuildGradle(package, includeLanguageVersion: true);
-    writeFakeManifest(package, packageName: 'wrong.package.name');
+  test(
+    'fails when plugin namespace does not match AndroidManifest.xml',
+    () async {
+      final RepositoryPackage package = createFakePlugin(
+        'a_plugin',
+        packagesDir,
+        examples: <String>[],
+      );
+      writeFakePluginBuildGradle(package, includeLanguageVersion: true);
+      writeFakeManifest(package, packageName: 'wrong.package.name');
 
-    Error? commandError;
-    final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
+      Error? commandError;
+      final List<String> output = await runCapturingPrint(
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
+      );
 
-    expect(commandError, isA<ToolExit>());
-    expect(
-      output,
-      containsAllInOrder(<Matcher>[
-        contains(
-            'build.gradle "namespace" must match the "package" attribute in AndroidManifest.xml'),
-      ]),
-    );
-  });
+      expect(commandError, isA<ToolExit>());
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains(
+            'build.gradle "namespace" must match the "package" attribute in AndroidManifest.xml',
+          ),
+        ]),
+      );
+    },
+  );
 
   test('fails when namespace is missing', () async {
-    final RepositoryPackage package =
-        createFakePlugin('a_plugin', packagesDir, examples: <String>[]);
-    writeFakePluginBuildGradle(package,
-        includeLanguageVersion: true, includeNamespace: false);
+    final RepositoryPackage package = createFakePlugin(
+      'a_plugin',
+      packagesDir,
+      examples: <String>[],
+    );
+    writeFakePluginBuildGradle(
+      package,
+      includeLanguageVersion: true,
+      includeNamespace: false,
+    );
     writeFakeManifest(package);
 
     Error? commandError;
     final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
+      runner,
+      <String>['gradle-check'],
+      errorHandler: (Error e) {
+        commandError = e;
+      },
+    );
 
     expect(commandError, isA<ToolExit>());
     expect(
@@ -526,20 +703,26 @@ dependencies {
   });
 
   test('fails when namespace is missing from example', () async {
-    const String pluginName = 'a_plugin';
+    const pluginName = 'a_plugin';
     final RepositoryPackage package = createFakePlugin(pluginName, packagesDir);
     writeFakePluginBuildGradle(package, includeLanguageVersion: true);
     writeFakeManifest(package);
     final RepositoryPackage example = package.getExamples().first;
-    writeFakeExampleBuildGradles(example,
-        pluginName: pluginName, includeNamespace: false);
+    writeFakeExampleBuildGradles(
+      example,
+      pluginName: pluginName,
+      includeNamespace: false,
+    );
     writeFakeManifest(example, isApp: true);
 
     Error? commandError;
     final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
+      runner,
+      <String>['gradle-check'],
+      errorHandler: (Error e) {
+        commandError = e;
+      },
+    );
 
     expect(commandError, isA<ToolExit>());
     expect(
@@ -554,44 +737,66 @@ dependencies {
   // point decide that we have a use case of example apps having different
   // app IDs and namespaces. For now, it's enforced for consistency so they
   // don't just accidentally diverge.
-  test('fails when namespace in example does not match AndroidManifest.xml',
-      () async {
-    const String pluginName = 'a_plugin';
-    final RepositoryPackage package = createFakePlugin(pluginName, packagesDir);
-    writeFakePluginBuildGradle(package, includeLanguageVersion: true);
-    writeFakeManifest(package);
-    final RepositoryPackage example = package.getExamples().first;
-    writeFakeExampleBuildGradles(example, pluginName: pluginName);
-    writeFakeManifest(example, isApp: true, packageName: 'wrong.package.name');
+  test(
+    'fails when namespace in example does not match AndroidManifest.xml',
+    () async {
+      const pluginName = 'a_plugin';
+      final RepositoryPackage package = createFakePlugin(
+        pluginName,
+        packagesDir,
+      );
+      writeFakePluginBuildGradle(package, includeLanguageVersion: true);
+      writeFakeManifest(package);
+      final RepositoryPackage example = package.getExamples().first;
+      writeFakeExampleBuildGradles(example, pluginName: pluginName);
+      writeFakeManifest(
+        example,
+        isApp: true,
+        packageName: 'wrong.package.name',
+      );
 
-    Error? commandError;
-    final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
+      Error? commandError;
+      final List<String> output = await runCapturingPrint(
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
+      );
 
-    expect(commandError, isA<ToolExit>());
-    expect(
-      output,
-      containsAllInOrder(<Matcher>[
-        contains(
-            'build.gradle "namespace" must match the "package" attribute in AndroidManifest.xml'),
-      ]),
-    );
-  });
+      expect(commandError, isA<ToolExit>());
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains(
+            'build.gradle "namespace" must match the "package" attribute in AndroidManifest.xml',
+          ),
+        ]),
+      );
+    },
+  );
 
   test('fails when namespace is commented out', () async {
-    final RepositoryPackage package =
-        createFakePlugin('a_plugin', packagesDir, examples: <String>[]);
-    writeFakePluginBuildGradle(package,
-        includeLanguageVersion: true, commentNamespace: true);
+    final RepositoryPackage package = createFakePlugin(
+      'a_plugin',
+      packagesDir,
+      examples: <String>[],
+    );
+    writeFakePluginBuildGradle(
+      package,
+      includeLanguageVersion: true,
+      commentNamespace: true,
+    );
     writeFakeManifest(package);
 
     Error? commandError;
     final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
+      runner,
+      <String>['gradle-check'],
+      errorHandler: (Error e) {
+        commandError = e;
+      },
+    );
 
     expect(commandError, isA<ToolExit>());
     expect(
@@ -602,131 +807,172 @@ dependencies {
     );
   });
 
-  test('passes when namespace is declared with "=" declaration', () async {
-    const String pluginName = 'a_plugin';
+  test('fails when namespace is declared without "=" declaration', () async {
+    const pluginName = 'a_plugin';
     final RepositoryPackage package = createFakePlugin(pluginName, packagesDir);
     writeFakePluginBuildGradle(package, includeLanguageVersion: true);
     writeFakeManifest(package);
     final RepositoryPackage example = package.getExamples().first;
-    writeFakeExampleBuildGradles(example,
-        pluginName: pluginName, includeNameSpaceAsDeclaration: true);
+    writeFakeExampleBuildGradles(
+      example,
+      pluginName: pluginName,
+      includeNameSpaceAsDeclaration: false,
+    );
     writeFakeManifest(example, isApp: true);
 
+    Error? commandError;
     final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      print((e as ToolExit).stackTrace);
-    });
+      runner,
+      <String>['gradle-check'],
+      errorHandler: (Error e) {
+        commandError = e;
+      },
+    );
 
+    expect(commandError, isA<ToolExit>());
     expect(
-        output,
-        containsAllInOrder(
-          <Matcher>[
-            contains('Validating android/app/build.gradle'),
-          ],
-        ));
+      output,
+      containsAllInOrder(<Matcher>[
+        contains('build.gradle must set a "namespace"'),
+        contains('The following packages had errors:'),
+      ]),
+    );
   });
 
   test('fails if gradle-driven lint-warnings-as-errors is missing', () async {
-    const String pluginName = 'a_plugin';
-    final RepositoryPackage plugin =
-        createFakePlugin(pluginName, packagesDir, examples: <String>[]);
-    writeFakePluginBuildGradle(plugin,
-        includeLanguageVersion: true, warningsConfigured: false);
+    const pluginName = 'a_plugin';
+    final RepositoryPackage plugin = createFakePlugin(
+      pluginName,
+      packagesDir,
+      examples: <String>[],
+    );
+    writeFakePluginBuildGradle(
+      plugin,
+      includeLanguageVersion: true,
+      warningsConfigured: false,
+    );
     writeFakeManifest(plugin);
 
     Error? commandError;
     final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
+      runner,
+      <String>['gradle-check'],
+      errorHandler: (Error e) {
+        commandError = e;
+      },
+    );
 
     expect(commandError, isA<ToolExit>());
     expect(
-        output,
-        containsAllInOrder(
-          <Matcher>[
-            contains('This package is not configured to enable all '
-                'Gradle-driven lint warnings and treat them as errors.'),
-            contains('The following packages had errors:'),
-          ],
-        ));
-  });
-
-  test('fails if plugin example javac lint-warnings-as-errors is missing',
-      () async {
-    const String pluginName = 'a_plugin';
-    final RepositoryPackage plugin = createFakePlugin(pluginName, packagesDir,
-        platformSupport: <String, PlatformDetails>{
-          platformAndroid: const PlatformDetails(PlatformSupport.inline),
-        });
-    writeFakePluginBuildGradle(plugin, includeLanguageVersion: true);
-    writeFakeManifest(plugin);
-    final RepositoryPackage example = plugin.getExamples().first;
-    writeFakeExampleBuildGradles(example,
-        pluginName: pluginName, warningsConfigured: false);
-    writeFakeManifest(example, isApp: true);
-
-    Error? commandError;
-    final List<String> output = await runCapturingPrint(
-        runner, <String>['gradle-check'], errorHandler: (Error e) {
-      commandError = e;
-    });
-
-    expect(commandError, isA<ToolExit>());
-    expect(
-        output,
-        containsAllInOrder(
-          <Matcher>[
-            contains('The example "example" is not configured to treat javac '
-                'lints and warnings as errors.'),
-            contains('The following packages had errors:'),
-          ],
-        ));
+      output,
+      containsAllInOrder(<Matcher>[
+        contains(
+          'This package is not configured to enable all '
+          'Gradle-driven lint warnings and treat them as errors.',
+        ),
+        contains('The following packages had errors:'),
+      ]),
+    );
   });
 
   test(
-      'passes if non-plugin package example javac lint-warnings-as-errors is missing',
-      () async {
-    const String packageName = 'a_package';
-    final RepositoryPackage plugin =
-        createFakePackage(packageName, packagesDir);
-    final RepositoryPackage example = plugin.getExamples().first;
-    writeFakeExampleBuildGradles(example,
-        pluginName: packageName, warningsConfigured: false);
-    writeFakeManifest(example, isApp: true);
+    'fails if plugin example javac lint-warnings-as-errors is missing',
+    () async {
+      const pluginName = 'a_plugin';
+      final RepositoryPackage plugin = createFakePlugin(
+        pluginName,
+        packagesDir,
+        platformSupport: <String, PlatformDetails>{
+          platformAndroid: const PlatformDetails(PlatformSupport.inline),
+        },
+      );
+      writeFakePluginBuildGradle(plugin, includeLanguageVersion: true);
+      writeFakeManifest(plugin);
+      final RepositoryPackage example = plugin.getExamples().first;
+      writeFakeExampleBuildGradles(
+        example,
+        pluginName: pluginName,
+        warningsConfigured: false,
+      );
+      writeFakeManifest(example, isApp: true);
 
-    final List<String> output =
-        await runCapturingPrint(runner, <String>['gradle-check']);
+      Error? commandError;
+      final List<String> output = await runCapturingPrint(
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
+      );
 
-    expect(
+      expect(commandError, isA<ToolExit>());
+      expect(
         output,
-        containsAllInOrder(
-          <Matcher>[
-            contains('Validating android/build.gradle'),
-          ],
-        ));
-  });
+        containsAllInOrder(<Matcher>[
+          contains(
+            'The example "example" is not configured to treat javac '
+            'lints and warnings as errors.',
+          ),
+          contains('The following packages had errors:'),
+        ]),
+      );
+    },
+  );
+
+  test(
+    'passes if non-plugin package example javac lint-warnings-as-errors is missing',
+    () async {
+      const packageName = 'a_package';
+      final RepositoryPackage plugin = createFakePackage(
+        packageName,
+        packagesDir,
+      );
+      final RepositoryPackage example = plugin.getExamples().first;
+      writeFakeExampleBuildGradles(
+        example,
+        pluginName: packageName,
+        warningsConfigured: false,
+      );
+      writeFakeManifest(example, isApp: true);
+
+      final List<String> output = await runCapturingPrint(runner, <String>[
+        'gradle-check',
+      ]);
+
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains('Validating android/build.gradle'),
+        ]),
+      );
+    },
+  );
 
   group('Artifact Hub check', () {
     test('passes build.gradle artifact hub check when set', () async {
-      const String packageName = 'a_package';
-      final RepositoryPackage package =
-          createFakePackage('a_package', packagesDir);
+      const packageName = 'a_package';
+      final RepositoryPackage package = createFakePackage(
+        'a_package',
+        packagesDir,
+      );
       writeFakePluginBuildGradle(package, includeLanguageVersion: true);
       writeFakeManifest(package);
       final RepositoryPackage example = package.getExamples().first;
-      writeFakeExampleBuildGradles(example,
-          pluginName: packageName,
-          // ignore: avoid_redundant_argument_values
-          includeBuildArtifactHub: true,
-          // ignore: avoid_redundant_argument_values
-          includeSettingsArtifactHub: true,
-          // ignore: avoid_redundant_argument_values
-          includeSettingsDocumentationArtifactHub: true);
+      writeFakeExampleBuildGradles(
+        example,
+        pluginName: packageName,
+        // ignore: avoid_redundant_argument_values
+        includeBuildArtifactHub: true,
+        // ignore: avoid_redundant_argument_values
+        includeSettingsArtifactHub: true,
+        // ignore: avoid_redundant_argument_values
+        includeSettingsDocumentationArtifactHub: true,
+      );
       writeFakeManifest(example, isApp: true);
 
-      final List<String> output =
-          await runCapturingPrint(runner, <String>['gradle-check']);
+      final List<String> output = await runCapturingPrint(runner, <String>[
+        'gradle-check',
+      ]);
 
       expect(
         output,
@@ -736,11 +982,51 @@ dependencies {
         ]),
       );
     });
-    test('fails artifact hub check when build and settings sections missing',
-        () async {
-      const String packageName = 'a_package';
-      final RepositoryPackage package =
-          createFakePackage('a_package', packagesDir);
+    test(
+      'fails artifact hub check when build and settings sections missing',
+      () async {
+        const packageName = 'a_package';
+        final RepositoryPackage package = createFakePackage(
+          'a_package',
+          packagesDir,
+        );
+        writeFakePluginBuildGradle(package, includeLanguageVersion: true);
+        writeFakeManifest(package);
+        final RepositoryPackage example = package.getExamples().first;
+        writeFakeExampleBuildGradles(
+          example,
+          pluginName: packageName,
+          includeBuildArtifactHub: false,
+          includeSettingsArtifactHub: false,
+        );
+        writeFakeManifest(example, isApp: true);
+
+        Error? commandError;
+        final List<String> output = await runCapturingPrint(
+          runner,
+          <String>['gradle-check'],
+          errorHandler: (Error e) {
+            commandError = e;
+          },
+        );
+
+        expect(commandError, isA<ToolExit>());
+        expect(
+          output,
+          containsAllInOrder(<Matcher>[
+            contains(GradleCheckCommand.exampleRootGradleArtifactHubString),
+            contains(GradleCheckCommand.exampleSettingsArtifactHubString),
+          ]),
+        );
+      },
+    );
+
+    test('fails build.gradle artifact hub check when missing', () async {
+      const packageName = 'a_package';
+      final RepositoryPackage package = createFakePackage(
+        'a_package',
+        packagesDir,
+      );
       writeFakePluginBuildGradle(package, includeLanguageVersion: true);
       writeFakeManifest(package);
       final RepositoryPackage example = package.getExamples().first;
@@ -748,45 +1034,19 @@ dependencies {
         example,
         pluginName: packageName,
         includeBuildArtifactHub: false,
-        includeSettingsArtifactHub: false,
+        // ignore: avoid_redundant_argument_values
+        includeSettingsArtifactHub: true,
       );
       writeFakeManifest(example, isApp: true);
 
       Error? commandError;
       final List<String> output = await runCapturingPrint(
-          runner, <String>['gradle-check'], errorHandler: (Error e) {
-        commandError = e;
-      });
-
-      expect(commandError, isA<ToolExit>());
-      expect(
-        output,
-        containsAllInOrder(<Matcher>[
-          contains(GradleCheckCommand.exampleRootGradleArtifactHubString),
-          contains(GradleCheckCommand.exampleSettingsArtifactHubString),
-        ]),
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
       );
-    });
-
-    test('fails build.gradle artifact hub check when missing', () async {
-      const String packageName = 'a_package';
-      final RepositoryPackage package =
-          createFakePackage('a_package', packagesDir);
-      writeFakePluginBuildGradle(package, includeLanguageVersion: true);
-      writeFakeManifest(package);
-      final RepositoryPackage example = package.getExamples().first;
-      writeFakeExampleBuildGradles(example,
-          pluginName: packageName,
-          includeBuildArtifactHub: false,
-          // ignore: avoid_redundant_argument_values
-          includeSettingsArtifactHub: true);
-      writeFakeManifest(example, isApp: true);
-
-      Error? commandError;
-      final List<String> output = await runCapturingPrint(
-          runner, <String>['gradle-check'], errorHandler: (Error e) {
-        commandError = e;
-      });
 
       expect(commandError, isA<ToolExit>());
       expect(
@@ -798,24 +1058,31 @@ dependencies {
     });
 
     test('fails settings.gradle artifact hub check when missing', () async {
-      const String packageName = 'a_package';
-      final RepositoryPackage package =
-          createFakePackage('a_package', packagesDir);
+      const packageName = 'a_package';
+      final RepositoryPackage package = createFakePackage(
+        'a_package',
+        packagesDir,
+      );
       writeFakePluginBuildGradle(package, includeLanguageVersion: true);
       writeFakeManifest(package);
       final RepositoryPackage example = package.getExamples().first;
-      writeFakeExampleBuildGradles(example,
-          pluginName: packageName,
-          // ignore: avoid_redundant_argument_values
-          includeBuildArtifactHub: true,
-          includeSettingsArtifactHub: false);
+      writeFakeExampleBuildGradles(
+        example,
+        pluginName: packageName,
+        // ignore: avoid_redundant_argument_values
+        includeBuildArtifactHub: true,
+        includeSettingsArtifactHub: false,
+      );
       writeFakeManifest(example, isApp: true);
 
       Error? commandError;
       final List<String> output = await runCapturingPrint(
-          runner, <String>['gradle-check'], errorHandler: (Error e) {
-        commandError = e;
-      });
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
+      );
 
       expect(commandError, isA<ToolExit>());
       expect(
@@ -830,84 +1097,105 @@ dependencies {
       );
     });
 
-    test('prints error for declarative method of applying gradle plugins',
-        () async {
-      const String packageName = 'a_package';
-      final RepositoryPackage package =
-          createFakePackage('a_package', packagesDir);
-      writeFakePluginBuildGradle(package, includeLanguageVersion: true);
-      writeFakeManifest(package);
-      final RepositoryPackage example = package.getExamples().first;
-      writeFakeExampleBuildGradles(example,
+    test(
+      'prints error for declarative method of applying gradle plugins',
+      () async {
+        const packageName = 'a_package';
+        final RepositoryPackage package = createFakePackage(
+          'a_package',
+          packagesDir,
+        );
+        writeFakePluginBuildGradle(package, includeLanguageVersion: true);
+        writeFakeManifest(package);
+        final RepositoryPackage example = package.getExamples().first;
+        writeFakeExampleBuildGradles(
+          example,
           pluginName: packageName,
           // ignore: avoid_redundant_argument_values
           includeBuildArtifactHub: true,
           includeSettingsArtifactHub: false,
           // ignore: avoid_redundant_argument_values
-          includeSettingsDocumentationArtifactHub: true);
-      writeFakeManifest(example, isApp: true);
+          includeSettingsDocumentationArtifactHub: true,
+        );
+        writeFakeManifest(example, isApp: true);
 
-      Error? commandError;
-      final List<String> output = await runCapturingPrint(
-          runner, <String>['gradle-check'], errorHandler: (Error e) {
-        commandError = e;
-      });
+        Error? commandError;
+        final List<String> output = await runCapturingPrint(
+          runner,
+          <String>['gradle-check'],
+          errorHandler: (Error e) {
+            commandError = e;
+          },
+        );
 
-      expect(commandError, isA<ToolExit>());
-      expect(
-        output,
-        containsAllInOrder(<Matcher>[
-          contains(GradleCheckCommand.exampleSettingsArtifactHubString),
-        ]),
-      );
-    });
+        expect(commandError, isA<ToolExit>());
+        expect(
+          output,
+          containsAllInOrder(<Matcher>[
+            contains(GradleCheckCommand.exampleSettingsArtifactHubString),
+          ]),
+        );
+      },
+    );
 
-    test('error message is printed when documentation link is missing',
-        () async {
-      const String packageName = 'a_package';
-      final RepositoryPackage package =
-          createFakePackage('a_package', packagesDir);
-      writeFakePluginBuildGradle(package, includeLanguageVersion: true);
-      writeFakeManifest(package);
-      final RepositoryPackage example = package.getExamples().first;
-      writeFakeExampleBuildGradles(example,
+    test(
+      'error message is printed when documentation link is missing',
+      () async {
+        const packageName = 'a_package';
+        final RepositoryPackage package = createFakePackage(
+          'a_package',
+          packagesDir,
+        );
+        writeFakePluginBuildGradle(package, includeLanguageVersion: true);
+        writeFakeManifest(package);
+        final RepositoryPackage example = package.getExamples().first;
+        writeFakeExampleBuildGradles(
+          example,
           pluginName: packageName,
           // ignore: avoid_redundant_argument_values
           includeBuildArtifactHub: true,
           // ignore: avoid_redundant_argument_values
           includeSettingsArtifactHub: true,
-          includeSettingsDocumentationArtifactHub: false);
-      writeFakeManifest(example, isApp: true);
+          includeSettingsDocumentationArtifactHub: false,
+        );
+        writeFakeManifest(example, isApp: true);
 
-      Error? commandError;
-      final List<String> output = await runCapturingPrint(
-          runner, <String>['gradle-check'], errorHandler: (Error e) {
-        commandError = e;
-      });
+        Error? commandError;
+        final List<String> output = await runCapturingPrint(
+          runner,
+          <String>['gradle-check'],
+          errorHandler: (Error e) {
+            commandError = e;
+          },
+        );
 
-      expect(commandError, isA<ToolExit>());
-      expect(
-        output,
-        containsAllInOrder(<Matcher>[
-          contains(GradleCheckCommand.artifactHubDocumentationString),
-        ]),
-      );
-    });
+        expect(commandError, isA<ToolExit>());
+        expect(
+          output,
+          containsAllInOrder(<Matcher>[
+            contains(GradleCheckCommand.artifactHubDocumentationString),
+          ]),
+        );
+      },
+    );
   });
 
   group('Kotlin version check', () {
     test('passes if not set', () async {
-      const String packageName = 'a_package';
-      final RepositoryPackage package =
-          createFakePackage('a_package', packagesDir);
+      const packageName = 'a_package';
+      final RepositoryPackage package = createFakePackage(
+        'a_package',
+        packagesDir,
+      );
       writeFakePluginBuildGradle(package, includeLanguageVersion: true);
       writeFakeManifest(package);
       final RepositoryPackage example = package.getExamples().first;
       writeFakeExampleBuildGradles(example, pluginName: packageName);
       writeFakeManifest(example, isApp: true);
 
-      final List<String> output =
-          await runCapturingPrint(runner, <String>['gradle-check']);
+      final List<String> output = await runCapturingPrint(runner, <String>[
+        'gradle-check',
+      ]);
 
       expect(
         output,
@@ -918,18 +1206,24 @@ dependencies {
     });
 
     test('passes if at the minimum allowed version', () async {
-      const String packageName = 'a_package';
-      final RepositoryPackage package =
-          createFakePackage('a_package', packagesDir);
+      const packageName = 'a_package';
+      final RepositoryPackage package = createFakePackage(
+        'a_package',
+        packagesDir,
+      );
       writeFakePluginBuildGradle(package, includeLanguageVersion: true);
       writeFakeManifest(package);
       final RepositoryPackage example = package.getExamples().first;
-      writeFakeExampleBuildGradles(example,
-          pluginName: packageName, kotlinVersion: minKotlinVersion.toString());
+      writeFakeExampleBuildGradles(
+        example,
+        pluginName: packageName,
+        kotlinVersion: minKotlinVersion.toString(),
+      );
       writeFakeManifest(example, isApp: true);
 
-      final List<String> output =
-          await runCapturingPrint(runner, <String>['gradle-check']);
+      final List<String> output = await runCapturingPrint(runner, <String>[
+        'gradle-check',
+      ]);
 
       expect(
         output,
@@ -940,18 +1234,24 @@ dependencies {
     });
 
     test('passes if above the minimum allowed version', () async {
-      const String packageName = 'a_package';
-      final RepositoryPackage package =
-          createFakePackage('a_package', packagesDir);
+      const packageName = 'a_package';
+      final RepositoryPackage package = createFakePackage(
+        'a_package',
+        packagesDir,
+      );
       writeFakePluginBuildGradle(package, includeLanguageVersion: true);
       writeFakeManifest(package);
       final RepositoryPackage example = package.getExamples().first;
-      writeFakeExampleBuildGradles(example,
-          pluginName: packageName, kotlinVersion: '99.99.0');
+      writeFakeExampleBuildGradles(
+        example,
+        pluginName: packageName,
+        kotlinVersion: '99.99.0',
+      );
       writeFakeManifest(example, isApp: true);
 
-      final List<String> output =
-          await runCapturingPrint(runner, <String>['gradle-check']);
+      final List<String> output = await runCapturingPrint(runner, <String>[
+        'gradle-check',
+      ]);
 
       expect(
         output,
@@ -962,29 +1262,382 @@ dependencies {
     });
 
     test('fails if below the minimum allowed version', () async {
-      const String packageName = 'a_package';
-      final RepositoryPackage package =
-          createFakePackage('a_package', packagesDir);
+      const packageName = 'a_package';
+      final RepositoryPackage package = createFakePackage(
+        'a_package',
+        packagesDir,
+      );
       writeFakePluginBuildGradle(package, includeLanguageVersion: true);
       writeFakeManifest(package);
       final RepositoryPackage example = package.getExamples().first;
-      writeFakeExampleBuildGradles(example,
-          pluginName: packageName, kotlinVersion: '1.6.21');
+      writeFakeExampleBuildGradles(
+        example,
+        pluginName: packageName,
+        kotlinVersion: '1.6.21',
+      );
       writeFakeManifest(example, isApp: true);
 
       Error? commandError;
       final List<String> output = await runCapturingPrint(
-          runner, <String>['gradle-check'], errorHandler: (Error e) {
-        commandError = e;
-      });
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
+      );
 
       expect(commandError, isA<ToolExit>());
       expect(
         output,
         containsAllInOrder(<Matcher>[
-          contains('build.gradle sets "ext.kotlin_version" to "1.6.21". The '
-              'minimum Kotlin version that can be specified is '
-              '$minKotlinVersion, for compatibility with modern dependencies.'),
+          contains(
+            'build.gradle sets "ext.kotlin_version" to "1.6.21". The '
+            'minimum Kotlin version that can be specified is '
+            '$minKotlinVersion, for compatibility with modern dependencies.',
+          ),
+        ]),
+      );
+    });
+  });
+
+  group('compileSdk check', () {
+    test(
+      'passes if set to a version higher than flutter.compileSdkVersion',
+      () async {
+        const packageName = 'a_package';
+        final RepositoryPackage package = createFakePackage(
+          packageName,
+          packagesDir,
+          isFlutter: true,
+        );
+        // Current flutter.compileSdkVersion is 36.
+        writeFakePluginBuildGradle(
+          package,
+          includeLanguageVersion: true,
+          compileSdk: '37',
+        );
+        writeFakeManifest(package);
+        final RepositoryPackage example = package.getExamples().first;
+        writeFakeExampleBuildGradles(example, pluginName: packageName);
+        writeFakeManifest(example, isApp: true);
+
+        final List<String> output = await runCapturingPrint(runner, <String>[
+          'gradle-check',
+        ]);
+
+        expect(
+          output,
+          containsAllInOrder(<Matcher>[
+            contains('Validating android/build.gradle'),
+          ]),
+        );
+      },
+    );
+
+    test(
+      'passes if set to flutter.compileSdkVersion with Flutter 3.27+',
+      () async {
+        const packageName = 'a_package';
+        final RepositoryPackage package = createFakePackage(
+          packageName,
+          packagesDir,
+          isFlutter: true,
+          flutterConstraint: '>=3.27.0',
+        );
+        writeFakePluginBuildGradle(
+          package,
+          includeLanguageVersion: true,
+          compileSdk: 'flutter.compileSdkVersion',
+        );
+        writeFakeManifest(package);
+        final RepositoryPackage example = package.getExamples().first;
+        writeFakeExampleBuildGradles(example, pluginName: packageName);
+        writeFakeManifest(example, isApp: true);
+
+        final List<String> output = await runCapturingPrint(runner, <String>[
+          'gradle-check',
+        ]);
+
+        expect(
+          output,
+          containsAllInOrder(<Matcher>[
+            contains('Validating android/build.gradle'),
+          ]),
+        );
+      },
+    );
+
+    test(
+      'fails if set to a version lower than flutter.compileSdkVersion',
+      () async {
+        const packageName = 'a_package';
+        final RepositoryPackage package = createFakePackage(
+          packageName,
+          packagesDir,
+          isFlutter: true,
+        );
+        // Current flutter.compileSdkVersion is 36.
+        const minCompileSdkVersion = '36';
+        const testCompileSdkVersion = '35';
+        writeFakePluginBuildGradle(
+          package,
+          includeLanguageVersion: true,
+          compileSdk: testCompileSdkVersion,
+        );
+        writeFakeManifest(package);
+        final RepositoryPackage example = package.getExamples().first;
+        writeFakeExampleBuildGradles(example, pluginName: packageName);
+        writeFakeManifest(example, isApp: true);
+
+        Error? commandError;
+        final List<String> output = await runCapturingPrint(
+          runner,
+          <String>['gradle-check'],
+          errorHandler: (Error e) {
+            commandError = e;
+          },
+        );
+
+        expect(commandError, isA<ToolExit>());
+        expect(
+          output,
+          containsAllInOrder(<Matcher>[
+            contains(
+              'compileSdk version $testCompileSdkVersion is too low. '
+              'Minimum required version is $minCompileSdkVersion.',
+            ),
+          ]),
+        );
+      },
+    );
+
+    test(
+      'fails if set to flutter.compileSdkVersion with Flutter <3.27',
+      () async {
+        const packageName = 'a_package';
+        final RepositoryPackage package = createFakePackage(
+          packageName,
+          packagesDir,
+          isFlutter: true,
+          flutterConstraint: '>=3.24.0',
+        );
+        writeFakePluginBuildGradle(
+          package,
+          includeLanguageVersion: true,
+          compileSdk: 'flutter.compileSdkVersion',
+        );
+        writeFakeManifest(package);
+        final RepositoryPackage example = package.getExamples().first;
+        writeFakeExampleBuildGradles(example, pluginName: packageName);
+        writeFakeManifest(example, isApp: true);
+
+        Error? commandError;
+        final List<String> output = await runCapturingPrint(
+          runner,
+          <String>['gradle-check'],
+          errorHandler: (Error e) {
+            commandError = e;
+          },
+        );
+
+        expect(commandError, isA<ToolExit>());
+        expect(
+          output,
+          containsAllInOrder(<Matcher>[
+            contains(
+              'Use of flutter.compileSdkVersion requires a minimum '
+              'Flutter version of 3.27, but this package currently supports '
+              '3.24.0',
+            ),
+          ]),
+        );
+      },
+    );
+
+    test('fails if uses the legacy key', () async {
+      const packageName = 'a_package';
+      final RepositoryPackage package = createFakePackage(
+        packageName,
+        packagesDir,
+        isFlutter: true,
+      );
+      writeFakePluginBuildGradle(
+        package,
+        includeLanguageVersion: true,
+        useDeprecatedCompileSdkVersion: true,
+      );
+      writeFakeManifest(package);
+      final RepositoryPackage example = package.getExamples().first;
+      writeFakeExampleBuildGradles(example, pluginName: packageName);
+      writeFakeManifest(example, isApp: true);
+
+      Error? commandError;
+      final List<String> output = await runCapturingPrint(
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
+      );
+
+      expect(commandError, isA<ToolExit>());
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains(
+            'Please replace the deprecated "compileSdkVersion" setting '
+            'with the newer "compileSdk"',
+          ),
+        ]),
+      );
+    });
+
+    test('fails if compileSdk uses the method assignment', () async {
+      const packageName = 'a_package';
+      final RepositoryPackage package = createFakePackage(
+        packageName,
+        packagesDir,
+        isFlutter: true,
+      );
+      writeFakePluginBuildGradle(
+        package,
+        includeLanguageVersion: true,
+        usePropertyAssignment: false,
+      );
+      writeFakeManifest(package);
+      final RepositoryPackage example = package.getExamples().first;
+      writeFakeExampleBuildGradles(
+        example,
+        pluginName: packageName,
+        usePropertyAssignment: false,
+      );
+      writeFakeManifest(example, isApp: true);
+
+      Error? commandError;
+      final List<String> output = await runCapturingPrint(
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
+      );
+
+      expect(commandError, isA<ToolExit>());
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains('No "compileSdk =" found. Please use property assignment.'),
+        ]),
+      );
+    });
+  });
+
+  group('kotlinOptions check', () {
+    test('passes when kotlin options are specified', () async {
+      final RepositoryPackage package = createFakePlugin(
+        'a_plugin',
+        packagesDir,
+        examples: <String>[],
+      );
+      writeFakePluginBuildGradle(
+        package,
+        includeLanguageVersion: true,
+        // ignore: avoid_redundant_argument_values ensure codepath is tested if defaults change.
+        includeKotlinOptions: true,
+      );
+      writeFakeManifest(package);
+
+      final List<String> output = await runCapturingPrint(runner, <String>[
+        'gradle-check',
+      ]);
+
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains('Validating android/build.gradle'),
+        ]),
+      );
+    });
+
+    test('passes when kotlin options are not specified', () async {
+      final RepositoryPackage package = createFakePlugin(
+        'a_plugin',
+        packagesDir,
+        examples: <String>[],
+      );
+      writeFakePluginBuildGradle(
+        package,
+        includeLanguageVersion: true,
+        includeKotlinOptions: false,
+      );
+      writeFakeManifest(package);
+
+      final List<String> output = await runCapturingPrint(runner, <String>[
+        'gradle-check',
+      ]);
+
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains('Validating android/build.gradle'),
+        ]),
+      );
+    });
+
+    test('passes when kotlin options commented out', () async {
+      final RepositoryPackage package = createFakePlugin(
+        'a_plugin',
+        packagesDir,
+        examples: <String>[],
+      );
+      writeFakePluginBuildGradle(
+        package,
+        includeLanguageVersion: true,
+        commentKotlinOptions: true,
+      );
+      writeFakeManifest(package);
+
+      final List<String> output = await runCapturingPrint(runner, <String>[
+        'gradle-check',
+      ]);
+
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains('Validating android/build.gradle'),
+        ]),
+      );
+    });
+
+    test('fails when kotlin options uses string jvm version', () async {
+      final RepositoryPackage package = createFakePlugin(
+        'a_plugin',
+        packagesDir,
+        examples: <String>[],
+      );
+      writeFakePluginBuildGradle(
+        package,
+        includeLanguageVersion: true,
+        useDeprecatedJvmTargetStyle: true,
+      );
+      writeFakeManifest(package);
+
+      Error? commandError;
+      final List<String> output = await runCapturingPrint(
+        runner,
+        <String>['gradle-check'],
+        errorHandler: (Error e) {
+          commandError = e;
+        },
+      );
+
+      expect(commandError, isA<ToolExit>());
+      expect(
+        output,
+        containsAllInOrder(<Matcher>[
+          contains(
+            'build.gradle(.kts) sets jvmTarget then it must use JavaVersion syntax',
+          ),
         ]),
       );
     });

@@ -1,4 +1,4 @@
-// Copyright 2013 The Flutter Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,8 +25,7 @@ void main() {
     CameraPlatform.instance = AndroidCameraCameraX();
   });
 
-  final Map<ResolutionPreset, Size> presetExpectedSizes =
-      <ResolutionPreset, Size>{
+  final presetExpectedSizes = <ResolutionPreset, Size>{
     ResolutionPreset.low: const Size(240, 320),
     ResolutionPreset.medium: const Size(480, 720),
     ResolutionPreset.high: const Size(720, 1280),
@@ -45,30 +44,35 @@ void main() {
         actual.longestSide == expectedSize.longestSide;
   }
 
-  testWidgets('availableCameras only supports valid back or front cameras',
-      (WidgetTester tester) async {
-    final List<CameraDescription> availableCameras =
-        await CameraPlatform.instance.availableCameras();
+  testWidgets('availableCameras only supports valid back or front cameras', (
+    WidgetTester tester,
+  ) async {
+    final List<CameraDescription> availableCameras = await CameraPlatform
+        .instance
+        .availableCameras();
 
-    for (final CameraDescription cameraDescription in availableCameras) {
+    for (final cameraDescription in availableCameras) {
       expect(
-          cameraDescription.lensDirection, isNot(CameraLensDirection.external));
+        cameraDescription.lensDirection,
+        isNot(CameraLensDirection.external),
+      );
       expect(cameraDescription.sensorOrientation, anyOf(0, 90, 180, 270));
     }
   });
 
-  testWidgets('Preview takes expected resolution from preset',
-      (WidgetTester tester) async {
-    final List<CameraDescription> cameras =
-        await CameraPlatform.instance.availableCameras();
+  testWidgets('Preview takes expected resolution from preset', (
+    WidgetTester tester,
+  ) async {
+    final List<CameraDescription> cameras = await CameraPlatform.instance
+        .availableCameras();
     if (cameras.isEmpty) {
       return;
     }
-    for (final CameraDescription cameraDescription in cameras) {
-      bool previousPresetExactlySupported = true;
+    for (final cameraDescription in cameras) {
+      var previousPresetExactlySupported = true;
       for (final MapEntry<ResolutionPreset, Size> preset
           in presetExpectedSizes.entries) {
-        final CameraController controller = CameraController(
+        final controller = CameraController(
           cameraDescription,
           mediaSettings: MediaSettings(resolutionPreset: preset.key),
         );
@@ -80,35 +84,40 @@ void main() {
         }
 
         final bool presetExactlySupported = assertExpectedDimensions(
-            preset.value, controller.value.previewSize!);
+          preset.value,
+          controller.value.previewSize!,
+        );
         // Ensures that if a lower resolution was used for previous (lower)
         // resolution preset, then the current (higher) preset also is adjusted,
         // as it demands a hgher resolution.
         expect(
-            previousPresetExactlySupported || !presetExactlySupported, isTrue,
-            reason: 'The preview has a lower resolution than that specified.');
+          previousPresetExactlySupported || !presetExactlySupported,
+          isTrue,
+          reason: 'The preview has a lower resolution than that specified.',
+        );
         previousPresetExactlySupported = presetExactlySupported;
         await controller.dispose();
       }
     }
   });
 
-  testWidgets('Images from streaming have expected resolution from preset',
-      (WidgetTester tester) async {
-    final List<CameraDescription> cameras =
-        await CameraPlatform.instance.availableCameras();
+  testWidgets('Images from streaming have expected resolution from preset', (
+    WidgetTester tester,
+  ) async {
+    final List<CameraDescription> cameras = await CameraPlatform.instance
+        .availableCameras();
     if (cameras.isEmpty) {
       return;
     }
-    for (final CameraDescription cameraDescription in cameras) {
-      bool previousPresetExactlySupported = true;
+    for (final cameraDescription in cameras) {
+      var previousPresetExactlySupported = true;
       for (final MapEntry<ResolutionPreset, Size> preset
           in presetExpectedSizes.entries) {
-        final CameraController controller = CameraController(
+        final controller = CameraController(
           cameraDescription,
           mediaSettings: MediaSettings(resolutionPreset: preset.key),
         );
-        final Completer<CameraImage> imageCompleter = Completer<CameraImage>();
+        final imageCompleter = Completer<CameraImage>();
         await controller.initialize();
         await controller.startImageStream((CameraImage image) {
           imageCompleter.complete(image);
@@ -117,14 +126,17 @@ void main() {
 
         final CameraImage image = await imageCompleter.future;
         final bool presetExactlySupported = assertExpectedDimensions(
-            preset.value,
-            Size(image.height.toDouble(), image.width.toDouble()));
+          preset.value,
+          Size(image.height.toDouble(), image.width.toDouble()),
+        );
         // Ensures that if a lower resolution was used for previous (lower)
         // resolution preset, then the current (higher) preset also is adjusted,
         // as it demands a hgher resolution.
         expect(
-            previousPresetExactlySupported || !presetExactlySupported, isTrue,
-            reason: 'The preview has a lower resolution than that specified.');
+          previousPresetExactlySupported || !presetExactlySupported,
+          isTrue,
+          reason: 'The preview has a lower resolution than that specified.',
+        );
         previousPresetExactlySupported = presetExactlySupported;
 
         await controller.dispose();
@@ -138,9 +150,12 @@ void main() {
       return;
     }
 
-    final CameraController controller = CameraController(cameras[0],
-        mediaSettings:
-            const MediaSettings(resolutionPreset: ResolutionPreset.low));
+    final controller = CameraController(
+      cameras[0],
+      mediaSettings: const MediaSettings(
+        resolutionPreset: ResolutionPreset.low,
+      ),
+    );
     await controller.initialize();
     await controller.prepareForVideoRecording();
 
@@ -153,10 +168,8 @@ void main() {
     final int postStopTime =
         DateTime.now().millisecondsSinceEpoch - recordingStart;
 
-    final File videoFile = File(file.path);
-    final VideoPlayerController videoController = VideoPlayerController.file(
-      videoFile,
-    );
+    final videoFile = File(file.path);
+    final videoController = VideoPlayerController.file(videoFile);
     await videoController.initialize();
     final int duration = videoController.value.duration.inMilliseconds;
     await videoController.dispose();
@@ -170,21 +183,24 @@ void main() {
       return;
     }
 
-    final CameraController controller = CameraController(cameras[0],
-        mediaSettings:
-            const MediaSettings(resolutionPreset: ResolutionPreset.low));
+    final controller = CameraController(
+      cameras[0],
+      mediaSettings: const MediaSettings(
+        resolutionPreset: ResolutionPreset.low,
+      ),
+    );
     await controller.initialize();
     await controller.prepareForVideoRecording();
 
     int startPause;
-    int timePaused = 0;
-    const int pauseIterations = 2;
+    var timePaused = 0;
+    const pauseIterations = 2;
 
     await controller.startVideoRecording();
     final int recordingStart = DateTime.now().millisecondsSinceEpoch;
     sleep(const Duration(milliseconds: 500));
 
-    for (int i = 0; i < pauseIterations; i++) {
+    for (var i = 0; i < pauseIterations; i++) {
       await controller.pauseVideoRecording();
       startPause = DateTime.now().millisecondsSinceEpoch;
       sleep(const Duration(milliseconds: 500));
@@ -198,14 +214,55 @@ void main() {
     final int recordingTime =
         DateTime.now().millisecondsSinceEpoch - recordingStart;
 
-    final File videoFile = File(file.path);
-    final VideoPlayerController videoController = VideoPlayerController.file(
-      videoFile,
-    );
+    final videoFile = File(file.path);
+    final videoController = VideoPlayerController.file(videoFile);
     await videoController.initialize();
     final int duration = videoController.value.duration.inMilliseconds;
     await videoController.dispose();
 
     expect(duration, lessThan(recordingTime - timePaused));
   }, skip: skipFor157181);
+
+  testWidgets('Set description while recording captures full video', (
+    WidgetTester tester,
+  ) async {
+    final List<CameraDescription> cameras = await availableCameras();
+    if (cameras.length < 2) {
+      return;
+    }
+
+    final controller = CameraController(
+      cameras[0],
+      mediaSettings: const MediaSettings(
+        resolutionPreset: ResolutionPreset.medium,
+        enableAudio: true,
+      ),
+    );
+    await controller.initialize();
+    await controller.prepareForVideoRecording();
+
+    await controller.startVideoRecording();
+
+    await controller.setDescription(cameras[1]);
+
+    await tester.pumpAndSettle(const Duration(seconds: 4));
+
+    await controller.setDescription(cameras[0]);
+
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    final XFile file = await controller.stopVideoRecording();
+
+    final videoFile = File(file.path);
+    final videoController = VideoPlayerController.file(videoFile);
+    await videoController.initialize();
+    final int duration = videoController.value.duration.inMilliseconds;
+    await videoController.dispose();
+
+    expect(
+      duration,
+      greaterThanOrEqualTo(const Duration(seconds: 4).inMilliseconds),
+    );
+    await controller.dispose();
+  });
 }

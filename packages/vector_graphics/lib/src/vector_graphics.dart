@@ -1,4 +1,4 @@
-// Copyright 2013 The Flutter Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,11 +44,8 @@ enum RenderingStrategy {
 }
 
 /// The signature that [VectorGraphic.errorBuilder] uses to report exceptions.
-typedef VectorGraphicsErrorWidget = Widget Function(
-  BuildContext context,
-  Object error,
-  StackTrace stackTrace,
-);
+typedef VectorGraphicsErrorWidget =
+    Widget Function(BuildContext context, Object error, StackTrace stackTrace);
 
 /// A vector graphic/flutter_svg compatibility shim.
 VectorGraphic createCompatVectorGraphic({
@@ -61,6 +58,7 @@ VectorGraphic createCompatVectorGraphic({
   String? semanticsLabel,
   bool excludeFromSemantics = false,
   Clip clipBehavior = Clip.hardEdge,
+  Duration? transitionDuration,
   WidgetBuilder? placeholderBuilder,
   VectorGraphicsErrorWidget? errorBuilder,
   ColorFilter? colorFilter,
@@ -79,6 +77,7 @@ VectorGraphic createCompatVectorGraphic({
     semanticsLabel: semanticsLabel,
     excludeFromSemantics: excludeFromSemantics,
     clipBehavior: clipBehavior,
+    transitionDuration: transitionDuration,
     placeholderBuilder: placeholderBuilder,
     errorBuilder: errorBuilder,
     colorFilter: colorFilter,
@@ -118,6 +117,7 @@ class VectorGraphic extends StatefulWidget {
     this.semanticsLabel,
     this.excludeFromSemantics = false,
     this.clipBehavior = Clip.hardEdge,
+    this.transitionDuration,
     this.placeholderBuilder,
     this.errorBuilder,
     this.colorFilter,
@@ -137,6 +137,7 @@ class VectorGraphic extends StatefulWidget {
     this.semanticsLabel,
     this.excludeFromSemantics = false,
     this.clipBehavior = Clip.hardEdge,
+    this.transitionDuration,
     this.placeholderBuilder,
     this.errorBuilder,
     this.colorFilter,
@@ -218,6 +219,9 @@ class VectorGraphic extends StatefulWidget {
   /// A callback that fires if some exception happens during data acquisition or decoding.
   final VectorGraphicsErrorWidget? errorBuilder;
 
+  /// Set transition duration while switching from placeholder to url image
+  final Duration? transitionDuration;
+
   /// If provided, a color filter to apply to the vector graphic when painting.
   ///
   /// For example, `ColorFilter.mode(Colors.red, BlendMode.srcIn)` to give the vector
@@ -281,7 +285,11 @@ class _PictureData {
 @immutable
 class _PictureKey {
   const _PictureKey(
-      this.cacheKey, this.locale, this.textDirection, this.clipViewbox);
+    this.cacheKey,
+    this.locale,
+    this.textDirection,
+    this.clipViewbox,
+  );
 
   final Object cacheKey;
   final Locale? locale;
@@ -347,22 +355,27 @@ class _VectorGraphicWidgetState extends State<VectorGraphic> {
   }
 
   Future<_PictureData> _loadPicture(
-      BuildContext context, _PictureKey key, BytesLoader loader) {
+    BuildContext context,
+    _PictureKey key,
+    BytesLoader loader,
+  ) {
     if (_pendingPictures.containsKey(key)) {
       return _pendingPictures[key]!;
     }
-    final Future<_PictureData> result =
-        loader.loadBytes(context).then((ByteData data) {
-      return decodeVectorGraphics(
-        data,
-        locale: key.locale,
-        textDirection: key.textDirection,
-        clipViewbox: key.clipViewbox,
-        loader: loader,
-      );
-    }).then((PictureInfo pictureInfo) {
-      return _PictureData(pictureInfo, 0, key);
-    });
+    final Future<_PictureData> result = loader
+        .loadBytes(context)
+        .then((ByteData data) {
+          return decodeVectorGraphics(
+            data,
+            locale: key.locale,
+            textDirection: key.textDirection,
+            clipViewbox: key.clipViewbox,
+            loader: loader,
+          );
+        })
+        .then((PictureInfo pictureInfo) {
+          return _PictureData(pictureInfo, 0, key);
+        });
     _pendingPictures[key] = result;
     result.whenComplete(() {
       _pendingPictures.remove(key);
@@ -384,8 +397,12 @@ class _VectorGraphicWidgetState extends State<VectorGraphic> {
   Future<void> _loadAssetBytes() async {
     // First check if we have an avilable picture and use this immediately.
     final Object loaderKey = widget.loader.cacheKey(context);
-    final _PictureKey key =
-        _PictureKey(loaderKey, locale, textDirection, widget.clipViewbox);
+    final key = _PictureKey(
+      loaderKey,
+      locale,
+      textDirection,
+      widget.clipViewbox,
+    );
     final _PictureData? data = _livePictureCache[key];
     if (data != null) {
       data.count += 1;
@@ -448,7 +465,7 @@ class _VectorGraphicWidgetState extends State<VectorGraphic> {
 
       assert(width != null && height != null);
 
-      double scale = 1.0;
+      var scale = 1.0;
       scale = math.min(
         pictureInfo.size.width / width!,
         pictureInfo.size.height / height!,
@@ -497,10 +514,7 @@ class _VectorGraphicWidgetState extends State<VectorGraphic> {
           fit: widget.fit,
           alignment: widget.alignment,
           clipBehavior: widget.clipBehavior,
-          child: SizedBox.fromSize(
-            size: pictureInfo.size,
-            child: child,
-          ),
+          child: SizedBox.fromSize(size: pictureInfo.size, child: child),
         ),
       );
     } else if (_error != null && widget.errorBuilder != null) {
@@ -510,11 +524,19 @@ class _VectorGraphicWidgetState extends State<VectorGraphic> {
         _stackTrace ?? StackTrace.empty,
       );
     } else {
-      child = widget.placeholderBuilder?.call(context) ??
-          SizedBox(
-            width: widget.width,
-            height: widget.height,
-          );
+      child =
+          widget.placeholderBuilder?.call(context) ??
+          SizedBox(width: widget.width, height: widget.height);
+    }
+
+    if (widget.transitionDuration != null) {
+      child = AnimatedSwitcher(
+        duration: widget.transitionDuration!,
+        child: child,
+        transitionBuilder: (Widget child, Animation<double> animation) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      );
     }
 
     if (!widget.excludeFromSemantics) {
@@ -586,12 +608,7 @@ class _RawWebVectorGraphicWidget extends SingleChildRenderObjectWidget {
 
   @override
   RenderObject createRenderObject(BuildContext context) {
-    return RenderWebVectorGraphic(
-      pictureInfo,
-      assetKey,
-      colorFilter,
-      opacity,
-    );
+    return RenderWebVectorGraphic(pictureInfo, assetKey, colorFilter, opacity);
   }
 
   @override
@@ -622,11 +639,7 @@ class _RawPictureVectorGraphicWidget extends SingleChildRenderObjectWidget {
 
   @override
   RenderObject createRenderObject(BuildContext context) {
-    return RenderPictureVectorGraphic(
-      pictureInfo,
-      colorFilter,
-      opacity,
-    );
+    return RenderPictureVectorGraphic(pictureInfo, colorFilter, opacity);
   }
 
   @override

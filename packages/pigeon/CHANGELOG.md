@@ -1,3 +1,153 @@
+## 26.1.9
+
+* [dart] Reduces much duplication in reply-handling code.
+
+## 26.1.8
+
+* Makes some internal class constructors constant.
+
+## 26.1.7
+
+* [objc] Updates to use module imports.
+
+## 26.1.6
+
+* Bumps kotlin_version to 2.3.0.
+
+## 26.1.5
+
+* [kotlin] Fixes a "bridge method" warning when implementing an event stream handler.
+
+## 26.1.4
+
+* [swift][kotlin] Fixes crash that occurs when an object that is removed from the instance manager
+  calls to Dart.
+
+## 26.1.3
+
+* [dart] Fixes error from constructor parameter sharing name with attached field for a ProxyApi.
+* Updates minimum supported SDK version to Flutter 3.35/Dart 3.9.
+
+## 26.1.2
+
+* [kotlin] Fixes compilation error with unbounded type parameter for InstanceManager.
+
+## 26.1.1
+
+* Updates supported `analyzer` versions to 8.x or 9.x.
+* Updates minimum supported SDK version to Flutter 3.32/Dart 3.8.
+
+## 26.1.0
+
+* Deprecates `dartHostTestHandler` and `dartTestOut`.
+  * If you have a use case where this cannot easily be replaced with a mock or
+    fake of the generated Dart API, please provide details in
+    https://github.com/flutter/flutter/issues/178322.
+
+## 26.0.5
+
+* [kotlin] Serialize custom enums as `Long` instead of `Int` to avoid `ClassCastException` on decoding.
+
+## 26.0.4
+
+* Adds compatibility with `analyzer` 8.x.
+
+## 26.0.3
+
+* [kotlin] Removes all `containsKey` and replaces with `contains`.
+
+## 26.0.2
+
+* [kotlin] Fixes support for classes that override equals and hashCode for ProxyApis.
+* [kotlin] Adds error message log when a new Dart proxy instance fails to be created.
+* Updates minimum supported SDK version to Flutter 3.29/Dart 3.7.
+
+## 26.0.1
+
+* Improves documentation of `ProxyApi` annotation and internal Dart ProxyAPI helper functions.
+* Moves helper functions for generating Dart portion of ProxyAPIs.
+
+## 26.0.0
+
+* **Breaking Change** [dart] Changes name of constructors used to create subclasses of ProxyApis to
+  `pigeon_**original_name**`.
+* [dart] Adds ProxyApi overrides classes to be used in Flutter unit tests.
+
+## 25.5.0
+
+* [dart] Changes the default InstanceManager and its initialization to no longer make a message call
+  when used in a Flutter unit test.
+
+## 25.4.0
+
+* [gobject] Adds type id constants in header files so that they can be used by the user.
+* Updates minimum supported SDK version to Flutter 3.27/Dart 3.6.
+
+## 25.3.2
+
+* [dart] Fixes null pointer crashes/exceptions caused by premature finalization of Dart instances
+  for ProxyApis.
+
+## 25.3.1
+
+* [kotlin] Fixes Kotlin InstanceManager not properly removing callbacks from handler.
+* [kotlin] Fixes `SyntheticAccessor` lint caused by private utility methods.
+
+## 25.3.0
+
+* [swift] Adds equality methods to generated data classes.
+* [dart, kotlin] Shortens equality methods.
+
+## 25.2.0
+
+* [kotlin] Adds equality methods to generated data classes.
+
+## 25.1.0
+
+* [dart] Adds equality methods to generated data classes.
+
+## 25.0.0
+
+* **Breaking Change** Removes `oneLanguage` field from `PigeonOptions`.
+* Separates internal options classes from user facing options.
+* Adds `mergeDefinitionFileOptions` parameter to `runWithOptions` method.
+* Relocates `injectOverflowTypes` to non-public facing method.
+
+## 24.2.2
+
+* Updates compileSdk 34 to flutter.compileSdkVersion.
+
+## 24.2.1
+
+* [dart] Fixes potential race condition caused by a ProxyApi constructor message call being made in an async method.
+
+## 24.2.0
+
+* Adjusts task queues to use a shared task queue for all methods in a single
+  API instance, to give the same ordering guarantees as non-task-queue usage.
+* [swift] Adds task queue support to the Swift generator.
+
+## 24.1.1
+
+* [swift, kotlin] Adds an error message when a ProxyAPI callback method that returns a non-null
+  value is nullable.
+* [swift, kotlin] Adds an error message in the `ProxyApiBaseCodec` when an instance could not be
+  retrieved when reading a value.
+* [swift, kotlin] Fixes ProxyAPI platform APIs not calling completion when creating a new instance.
+
+## 24.1.0
+
+* [kotlin, swift] Adds annotation options to omit shared classes used in Event Channels.
+
+## 24.0.0
+
+* **Breaking Change** Relocates some files in `lib` that were not intended for direct client use to `lib/src`.
+
+## 23.0.0
+
+* **Breaking Change** [swift] Fixes a compile error about PigeonError's sendability conformance in Swift 6.
+  * PigeonError's init now requires the "details" argument to be Sendable.
+
 ## 22.7.4
 
 * [dart] Fixes bug with multi-instance event channel support.

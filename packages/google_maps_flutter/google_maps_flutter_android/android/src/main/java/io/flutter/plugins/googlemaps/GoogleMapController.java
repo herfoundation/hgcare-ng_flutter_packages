@@ -1,4 +1,4 @@
-// Copyright 2013 The Flutter Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,13 +26,16 @@ import androidx.annotation.VisibleForTesting;
 import androidx.lifecycle.DefaultLifecycleObserver;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
+import com.google.android.gms.maps.CameraUpdate;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.GoogleMapOptions;
 import com.google.android.gms.maps.MapView;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.model.Circle;
+import com.google.android.gms.maps.model.GroundOverlay;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.LatLngBounds;
+import com.google.android.gms.maps.model.MapCapabilities;
 import com.google.android.gms.maps.model.MapStyleOptions;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.Polygon;
@@ -48,6 +51,7 @@ import io.flutter.plugins.googlemaps.Messages.FlutterError;
 import io.flutter.plugins.googlemaps.Messages.MapsApi;
 import io.flutter.plugins.googlemaps.Messages.MapsCallbackApi;
 import io.flutter.plugins.googlemaps.Messages.MapsInspectorApi;
+import io.flutter.plugins.googlemaps.Messages.PlatformMarkerType;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -93,6 +97,7 @@ class GoogleMapController
   private final CirclesController circlesController;
   private final HeatmapsController heatmapsController;
   private final TileOverlaysController tileOverlaysController;
+  private final GroundOverlaysController groundOverlaysController;
   private MarkerManager markerManager;
   private MarkerManager.Collection markerCollection;
   private @Nullable List<Messages.PlatformMarker> initialMarkers;
@@ -102,6 +107,7 @@ class GoogleMapController
   private @Nullable List<Messages.PlatformCircle> initialCircles;
   private @Nullable List<Messages.PlatformHeatmap> initialHeatmaps;
   private @Nullable List<Messages.PlatformTileOverlay> initialTileOverlays;
+  private @Nullable List<Messages.PlatformGroundOverlay> initialGroundOverlays;
   // Null except between initialization and onMapReady.
   private @Nullable String initialMapStyle;
   private boolean lastSetStyleSucceeded;
@@ -112,7 +118,8 @@ class GoogleMapController
       Context context,
       BinaryMessenger binaryMessenger,
       LifecycleProvider lifecycleProvider,
-      GoogleMapOptions options) {
+      GoogleMapOptions options,
+      @NonNull PlatformMarkerType markerType) {
     this.id = id;
     this.context = context;
     this.options = options;
@@ -124,19 +131,21 @@ class GoogleMapController
     MapsInspectorApi.setUp(binaryMessenger, Integer.toString(id), this);
     AssetManager assetManager = context.getAssets();
     this.lifecycleProvider = lifecycleProvider;
-    this.clusterManagersController = new ClusterManagersController(flutterApi, context);
+    this.clusterManagersController = new ClusterManagersController(flutterApi, context, markerType);
     this.markersController =
         new MarkersController(
             flutterApi,
             clusterManagersController,
             assetManager,
             density,
-            new Convert.BitmapDescriptorFactoryWrapper());
+            new Convert.BitmapDescriptorFactoryWrapper(),
+            markerType);
     this.polygonsController = new PolygonsController(flutterApi, density);
     this.polylinesController = new PolylinesController(flutterApi, assetManager, density);
     this.circlesController = new CirclesController(flutterApi, density);
     this.heatmapsController = new HeatmapsController();
     this.tileOverlaysController = new TileOverlaysController(flutterApi);
+    this.groundOverlaysController = new GroundOverlaysController(flutterApi, assetManager, density);
   }
 
   // Constructor for testing purposes only
@@ -154,7 +163,8 @@ class GoogleMapController
       PolylinesController polylinesController,
       CirclesController circlesController,
       HeatmapsController heatmapController,
-      TileOverlaysController tileOverlaysController) {
+      TileOverlaysController tileOverlaysController,
+      GroundOverlaysController groundOverlaysController) {
     this.id = id;
     this.context = context;
     this.binaryMessenger = binaryMessenger;
@@ -170,6 +180,7 @@ class GoogleMapController
     this.circlesController = circlesController;
     this.heatmapsController = heatmapController;
     this.tileOverlaysController = tileOverlaysController;
+    this.groundOverlaysController = groundOverlaysController;
   }
 
   @Override
@@ -209,6 +220,7 @@ class GoogleMapController
     circlesController.setGoogleMap(googleMap);
     heatmapsController.setGoogleMap(googleMap);
     tileOverlaysController.setGoogleMap(googleMap);
+    groundOverlaysController.setGoogleMap(googleMap);
     setMarkerCollectionListener(this);
     setClusterItemClickListener(this);
     setClusterItemRenderedListener(this);
@@ -219,6 +231,7 @@ class GoogleMapController
     updateInitialCircles();
     updateInitialHeatmaps();
     updateInitialTileOverlays();
+    updateInitialGroundOverlays();
     if (initialPadding != null && initialPadding.size() == 4) {
       setPadding(
           initialPadding.get(0),
@@ -370,6 +383,11 @@ class GoogleMapController
   }
 
   @Override
+  public void onGroundOverlayClick(@NonNull GroundOverlay groundOverlay) {
+    groundOverlaysController.onGroundOverlayTap(groundOverlay.getId());
+  }
+
+  @Override
   public void dispose() {
     if (disposed) {
       return;
@@ -401,6 +419,7 @@ class GoogleMapController
     googleMap.setOnCircleClickListener(listener);
     googleMap.setOnMapClickListener(listener);
     googleMap.setOnMapLongClickListener(listener);
+    googleMap.setOnGroundOverlayClickListener(listener);
   }
 
   @VisibleForTesting
@@ -727,6 +746,21 @@ class GoogleMapController
     }
   }
 
+  @Override
+  public void setInitialGroundOverlays(
+      @NonNull List<Messages.PlatformGroundOverlay> initialGroundOverlays) {
+    this.initialGroundOverlays = initialGroundOverlays;
+    if (googleMap != null) {
+      updateInitialGroundOverlays();
+    }
+  }
+
+  private void updateInitialGroundOverlays() {
+    if (initialGroundOverlays != null) {
+      groundOverlaysController.addGroundOverlays(initialGroundOverlays);
+    }
+  }
+
   @SuppressLint("MissingPermission")
   private void updateMyLocationSettings() {
     if (hasLocationPermission()) {
@@ -892,6 +926,16 @@ class GoogleMapController
   }
 
   @Override
+  public void updateGroundOverlays(
+      @NonNull List<Messages.PlatformGroundOverlay> toAdd,
+      @NonNull List<Messages.PlatformGroundOverlay> toChange,
+      @NonNull List<String> idsToRemove) {
+    groundOverlaysController.addGroundOverlays(toAdd);
+    groundOverlaysController.changeGroundOverlays(toChange);
+    groundOverlaysController.removeGroundOverlays(idsToRemove);
+  }
+
+  @Override
   public @NonNull Messages.PlatformPoint getScreenCoordinate(
       @NonNull Messages.PlatformLatLng latLng) {
     if (googleMap == null) {
@@ -937,12 +981,18 @@ class GoogleMapController
   }
 
   @Override
-  public void animateCamera(@NonNull Messages.PlatformCameraUpdate cameraUpdate) {
+  public void animateCamera(
+      @NonNull Messages.PlatformCameraUpdate cameraUpdate, @Nullable Long durationMilliseconds) {
     if (googleMap == null) {
       throw new FlutterError(
           "GoogleMap uninitialized", "animateCamera called prior to map initialization", null);
     }
-    googleMap.animateCamera(Convert.cameraUpdateFromPigeon(cameraUpdate, density));
+    CameraUpdate update = Convert.cameraUpdateFromPigeon(cameraUpdate, density);
+    if (durationMilliseconds != null) {
+      googleMap.animateCamera(update, durationMilliseconds.intValue(), null);
+    } else {
+      googleMap.animateCamera(update);
+    }
   }
 
   @Override
@@ -978,6 +1028,18 @@ class GoogleMapController
   @Override
   public @NonNull Boolean didLastStyleSucceed() {
     return lastSetStyleSucceeded;
+  }
+
+  @Override
+  public @NonNull Boolean isAdvancedMarkersAvailable() {
+    if (googleMap == null) {
+      throw new FlutterError(
+          "GoogleMap uninitialized",
+          "isAdvancedMarkersAvailable() called prior to map initialization",
+          null);
+    }
+    final MapCapabilities mapCapabilities = googleMap.getMapCapabilities();
+    return mapCapabilities.isAdvancedMarkersAvailable();
   }
 
   @Override
@@ -1062,6 +1124,11 @@ class GoogleMapController
   }
 
   @Override
+  public @NonNull Messages.PlatformCameraPosition getCameraPosition() {
+    return Convert.cameraPositionToPigeon(Objects.requireNonNull(googleMap).getCameraPosition());
+  }
+
+  @Override
   public @Nullable Messages.PlatformTileLayer getTileOverlayInfo(@NonNull String tileOverlayId) {
     TileOverlay tileOverlay = tileOverlaysController.getTileOverlay(tileOverlayId);
     if (tileOverlay == null) {
@@ -1073,6 +1140,20 @@ class GoogleMapController
         .setZIndex((double) tileOverlay.getZIndex())
         .setVisible(tileOverlay.isVisible())
         .build();
+  }
+
+  @Override
+  public @Nullable Messages.PlatformGroundOverlay getGroundOverlayInfo(
+      @NonNull String groundOverlayId) {
+    GroundOverlay groundOverlay = groundOverlaysController.getGroundOverlay(groundOverlayId);
+    if (groundOverlay == null) {
+      return null;
+    }
+
+    return Convert.groundOverlayToPigeon(
+        groundOverlay,
+        groundOverlayId,
+        groundOverlaysController.isCreatedWithBounds(groundOverlayId));
   }
 
   @Override

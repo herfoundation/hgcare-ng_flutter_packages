@@ -1,4 +1,4 @@
-// Copyright 2013 The Flutter Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,6 +20,7 @@ import androidx.annotation.VisibleForTesting;
 import com.google.android.gms.maps.CameraUpdate;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.MapsInitializer;
+import com.google.android.gms.maps.model.AdvancedMarkerOptions;
 import com.google.android.gms.maps.model.BitmapDescriptor;
 import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.ButtCap;
@@ -29,37 +30,30 @@ import com.google.android.gms.maps.model.CustomCap;
 import com.google.android.gms.maps.model.Dash;
 import com.google.android.gms.maps.model.Dot;
 import com.google.android.gms.maps.model.Gap;
+import com.google.android.gms.maps.model.GroundOverlay;
 import com.google.android.gms.maps.model.JointType;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.PatternItem;
+import com.google.android.gms.maps.model.PinConfig;
 import com.google.android.gms.maps.model.RoundCap;
+import com.google.android.gms.maps.model.RuntimeRemoteException;
 import com.google.android.gms.maps.model.SquareCap;
 import com.google.android.gms.maps.model.Tile;
 import com.google.maps.android.clustering.Cluster;
 import com.google.maps.android.heatmaps.Gradient;
 import com.google.maps.android.heatmaps.WeightedLatLng;
 import io.flutter.FlutterInjector;
+import io.flutter.plugins.googlemaps.Messages.FlutterError;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
+import java.util.function.Consumer;
 
 /** Conversions between JSON-like values and GoogleMaps data types. */
 class Convert {
-  // These constants must match the corresponding constants in serialization.dart
-  public static final String HEATMAP_ID_KEY = "heatmapId";
-  public static final String HEATMAP_DATA_KEY = "data";
-  public static final String HEATMAP_GRADIENT_KEY = "gradient";
-  public static final String HEATMAP_MAX_INTENSITY_KEY = "maxIntensity";
-  public static final String HEATMAP_OPACITY_KEY = "opacity";
-  public static final String HEATMAP_RADIUS_KEY = "radius";
-  public static final String HEATMAP_GRADIENT_COLORS_KEY = "colors";
-  public static final String HEATMAP_GRADIENT_START_POINTS_KEY = "startPoints";
-  public static final String HEATMAP_GRADIENT_COLOR_MAP_SIZE_KEY = "colorMapSize";
-
   private static BitmapDescriptor toBitmapDescriptor(
       Messages.PlatformBitmap platformBitmap, AssetManager assetManager, float density) {
     return toBitmapDescriptor(
@@ -114,6 +108,10 @@ class Convert {
     if (bitmap instanceof Messages.PlatformBitmapBytesMap) {
       Messages.PlatformBitmapBytesMap typedBitmap = (Messages.PlatformBitmapBytesMap) bitmap;
       return getBitmapFromBytes(typedBitmap, density, wrapper);
+    }
+    if (bitmap instanceof Messages.PlatformBitmapPinConfig) {
+      Messages.PlatformBitmapPinConfig pinConfigBitmap = (Messages.PlatformBitmapPinConfig) bitmap;
+      return getBitmapFromPinConfigBuilder(pinConfigBitmap, assetManager, density, wrapper);
     }
     throw new IllegalArgumentException("PlatformBitmap did not contain a supported subtype.");
   }
@@ -182,6 +180,76 @@ class Convert {
       return bitmapDescriptorFactory.fromBitmap(bitmap);
     } catch (Exception e) {
       throw new IllegalArgumentException("Unable to interpret bytes as a valid image.", e);
+    }
+  }
+
+  public static BitmapDescriptor getBitmapFromPinConfigBuilder(
+      Messages.PlatformBitmapPinConfig pinConfigBitmap,
+      AssetManager assetManager,
+      float density,
+      BitmapDescriptorFactoryWrapper bitmapDescriptorFactory) {
+    try {
+      final PinConfig pinConfig =
+          getPinConfigFromPlatformPinConfig(
+              pinConfigBitmap, assetManager, density, bitmapDescriptorFactory);
+      return bitmapDescriptorFactory.fromPinConfig(pinConfig);
+    } catch (IllegalArgumentException | RuntimeRemoteException e) {
+      throw new IllegalArgumentException("Unable to interpret pin config as a valid image.", e);
+    }
+  }
+
+  @VisibleForTesting
+  public static PinConfig getPinConfigFromPlatformPinConfig(
+      Messages.PlatformBitmapPinConfig pinConfigBitmap,
+      AssetManager assetManager,
+      float density,
+      BitmapDescriptorFactoryWrapper bitmapDescriptorFactory) {
+    final Integer backgroundColor = nullableColor(pinConfigBitmap.getBackgroundColor());
+    final Integer borderColor = nullableColor(pinConfigBitmap.getBorderColor());
+    final PinConfig.Glyph glyph =
+        buildPinGlyph(pinConfigBitmap, assetManager, density, bitmapDescriptorFactory);
+
+    final PinConfig.Builder pinConfigBuilder = PinConfig.builder();
+    applyIfNotNull(backgroundColor, pinConfigBuilder::setBackgroundColor);
+    applyIfNotNull(borderColor, pinConfigBuilder::setBorderColor);
+    applyIfNotNull(glyph, pinConfigBuilder::setGlyph);
+
+    return pinConfigBuilder.build();
+  }
+
+  private static @Nullable PinConfig.Glyph buildPinGlyph(
+      Messages.PlatformBitmapPinConfig pinConfigBitmap,
+      AssetManager assetManager,
+      float density,
+      BitmapDescriptorFactoryWrapper bitmapDescriptorFactory) {
+    final String glyphText = pinConfigBitmap.getGlyphText();
+    if (glyphText != null) {
+      final Integer glyphTextColor = nullableColor(pinConfigBitmap.getGlyphTextColor());
+      return glyphTextColor != null
+          ? new PinConfig.Glyph(glyphText, glyphTextColor)
+          : new PinConfig.Glyph(glyphText);
+    }
+
+    final Messages.PlatformBitmap glyphBitmap = pinConfigBitmap.getGlyphBitmap();
+    if (glyphBitmap != null) {
+      return new PinConfig.Glyph(
+          toBitmapDescriptor(glyphBitmap, assetManager, density, bitmapDescriptorFactory));
+    }
+
+    final Integer glyphColor = nullableColor(pinConfigBitmap.getGlyphColor());
+    if (glyphColor != null) {
+      return new PinConfig.Glyph(glyphColor);
+    }
+    return null;
+  }
+
+  private static @Nullable Integer nullableColor(@Nullable Messages.PlatformColor color) {
+    return color == null ? null : color.getArgbValue().intValue();
+  }
+
+  private static <T> void applyIfNotNull(@Nullable T value, Consumer<T> setter) {
+    if (value != null) {
+      setter.accept(value);
     }
   }
 
@@ -326,14 +394,6 @@ class Convert {
         "PlatformCameraUpdate's cameraUpdate field must be one of the PlatformCameraUpdate... case classes.");
   }
 
-  private static double toDouble(Object o) {
-    return ((Number) o).doubleValue();
-  }
-
-  private static float toFloat(Object o) {
-    return ((Number) o).floatValue();
-  }
-
   private static @Nullable Float nullableDoubleToFloat(@Nullable Double d) {
     return (d == null) ? null : d.floatValue();
   }
@@ -358,6 +418,14 @@ class Convert {
     return MAP_TYPE_NORMAL;
   }
 
+  // For now, suppress the deprecation warning for LEGACY; in theory using it
+  // no longer does anything, but since that's a server-side decision that could
+  // potentially change. Once enough time has passed that there's no plausible
+  // chance of the server honoring LEGACY again, that mapping can be removed and
+  // it can just return null, causing anyone still using the deprecated value
+  // in Dart to actually request the platform default (which is what the server
+  // is already doing in practice currently).
+  @SuppressWarnings("deprecation")
   static @Nullable MapsInitializer.Renderer toMapRendererType(
       @Nullable Messages.PlatformRendererType type) {
     if (type == null) {
@@ -427,20 +495,15 @@ class Convert {
         .build();
   }
 
-  static LatLng toLatLng(Object o) {
-    final List<?> data = toList(o);
-    return new LatLng(toDouble(data.get(0)), toDouble(data.get(1)));
-  }
-
   /**
-   * Converts a list of serialized weighted lat/lng to a list of WeightedLatLng.
+   * Converts a Pigeon weighted lat/lng to a WeightedLatLng.
    *
-   * @param o The serialized list of weighted lat/lng.
+   * @param weightedLatLng The Pigeon weighted lat/lng.
    * @return The list of WeightedLatLng.
    */
-  static WeightedLatLng toWeightedLatLng(Object o) {
-    final List<?> data = toList(o);
-    return new WeightedLatLng(toLatLng(data.get(0)), toDouble(data.get(1)));
+  static WeightedLatLng weightedLatLngFromPigeon(Messages.PlatformWeightedLatLng weightedLatLng) {
+    return new WeightedLatLng(
+        latLngFromPigeon(weightedLatLng.getPoint()), weightedLatLng.getWeight());
   }
 
   static Point pointFromPigeon(Messages.PlatformPoint point) {
@@ -457,14 +520,6 @@ class Convert {
 
   static Messages.PlatformPoint pointToPigeon(Point point) {
     return new Messages.PlatformPoint.Builder().setX((long) point.x).setY((long) point.y).build();
-  }
-
-  private static List<?> toList(Object o) {
-    return (List<?>) o;
-  }
-
-  private static Map<?, ?> toMap(Object o) {
-    return (Map<?, ?>) o;
   }
 
   private static Bitmap toBitmap(byte[] bmpData) {
@@ -596,10 +651,11 @@ class Convert {
     sink.setFlat(marker.getFlat());
     sink.setIcon(toBitmapDescriptor(marker.getIcon(), assetManager, density, wrapper));
     interpretInfoWindowOptions(sink, marker.getInfoWindow());
-    sink.setPosition(toLatLng(marker.getPosition().toList()));
+    sink.setPosition(latLngFromPigeon(marker.getPosition()));
     sink.setRotation(marker.getRotation().floatValue());
     sink.setVisible(marker.getVisible());
     sink.setZIndex(marker.getZIndex().floatValue());
+    sink.setCollisionBehavior(collisionBehaviorFromPigeon(marker.getCollisionBehavior()));
   }
 
   private static void interpretInfoWindowOptions(
@@ -617,8 +673,8 @@ class Convert {
     sink.setConsumeTapEvents(polygon.getConsumesTapEvents());
     sink.setGeodesic(polygon.getGeodesic());
     sink.setVisible(polygon.getVisible());
-    sink.setFillColor(polygon.getFillColor().intValue());
-    sink.setStrokeColor(polygon.getStrokeColor().intValue());
+    sink.setFillColor(polygon.getFillColor().getArgbValue().intValue());
+    sink.setStrokeColor(polygon.getStrokeColor().getArgbValue().intValue());
     sink.setStrokeWidth(polygon.getStrokeWidth());
     sink.setZIndex(polygon.getZIndex());
     sink.setPoints(pointsFromPigeon(polygon.getPoints()));
@@ -638,13 +694,34 @@ class Convert {
     return JointType.DEFAULT;
   }
 
+  /**
+   * Converts a Pigeon collision behavior enum to the integer constant defined in {@link
+   * AdvancedMarkerOptions.CollisionBehavior}.
+   *
+   * @param collisionBehavior The Pigeon collision behavior enum to convert.
+   * @return The integer constant corresponding to the collision behavior.
+   */
+  static int collisionBehaviorFromPigeon(
+      @NonNull Messages.PlatformMarkerCollisionBehavior collisionBehavior) {
+    switch (collisionBehavior) {
+      case REQUIRED_DISPLAY:
+        return AdvancedMarkerOptions.CollisionBehavior.REQUIRED;
+      case OPTIONAL_AND_HIDES_LOWER_PRIORITY:
+        return AdvancedMarkerOptions.CollisionBehavior.OPTIONAL_AND_HIDES_LOWER_PRIORITY;
+      case REQUIRED_AND_HIDES_OPTIONAL:
+        return AdvancedMarkerOptions.CollisionBehavior.REQUIRED_AND_HIDES_OPTIONAL;
+      default:
+        return AdvancedMarkerOptions.CollisionBehavior.REQUIRED;
+    }
+  }
+
   static String interpretPolylineOptions(
       Messages.PlatformPolyline polyline,
       PolylineOptionsSink sink,
       AssetManager assetManager,
       float density) {
     sink.setConsumeTapEvents(polyline.getConsumesTapEvents());
-    sink.setColor(polyline.getColor().intValue());
+    sink.setColor(polyline.getColor().getArgbValue().intValue());
     sink.setEndCap(capFromPigeon(polyline.getEndCap(), assetManager, density));
     sink.setStartCap(capFromPigeon(polyline.getStartCap(), assetManager, density));
     sink.setGeodesic(polyline.getGeodesic());
@@ -659,11 +736,11 @@ class Convert {
 
   static String interpretCircleOptions(Messages.PlatformCircle circle, CircleOptionsSink sink) {
     sink.setConsumeTapEvents(circle.getConsumeTapEvents());
-    sink.setFillColor(circle.getFillColor().intValue());
-    sink.setStrokeColor(circle.getStrokeColor().intValue());
+    sink.setFillColor(circle.getFillColor().getArgbValue().intValue());
+    sink.setStrokeColor(circle.getStrokeColor().getArgbValue().intValue());
     sink.setStrokeWidth(circle.getStrokeWidth());
     sink.setZIndex(circle.getZIndex().floatValue());
-    sink.setCenter(toLatLng(circle.getCenter().toList()));
+    sink.setCenter(latLngFromPigeon(circle.getCenter()));
     sink.setRadius(circle.getRadius());
     sink.setVisible(circle.getVisible());
     return circle.getCircleId();
@@ -689,33 +766,19 @@ class Convert {
    * @return the heatmapId.
    * @throws IllegalArgumentException if heatmapId is null.
    */
-  static String interpretHeatmapOptions(Map<String, ?> data, HeatmapOptionsSink sink) {
-    final Object rawWeightedData = data.get(HEATMAP_DATA_KEY);
-    if (rawWeightedData != null) {
-      sink.setWeightedData(toWeightedData(rawWeightedData));
-    }
-    final Object gradient = data.get(HEATMAP_GRADIENT_KEY);
+  static String interpretHeatmapOptions(Messages.PlatformHeatmap heatmap, HeatmapOptionsSink sink) {
+    sink.setWeightedData(weightedDataFromPigeon(heatmap.getData()));
+    final Messages.PlatformHeatmapGradient gradient = heatmap.getGradient();
     if (gradient != null) {
-      sink.setGradient(toGradient(gradient));
+      sink.setGradient(gradientFromPigeon(gradient));
     }
-    final Object maxIntensity = data.get(HEATMAP_MAX_INTENSITY_KEY);
+    final Double maxIntensity = heatmap.getMaxIntensity();
     if (maxIntensity != null) {
-      sink.setMaxIntensity(toDouble(maxIntensity));
+      sink.setMaxIntensity(maxIntensity);
     }
-    final Object opacity = data.get(HEATMAP_OPACITY_KEY);
-    if (opacity != null) {
-      sink.setOpacity(toDouble(opacity));
-    }
-    final Object radius = data.get(HEATMAP_RADIUS_KEY);
-    if (radius != null) {
-      sink.setRadius(toInt(radius));
-    }
-    final String heatmapId = (String) data.get(HEATMAP_ID_KEY);
-    if (heatmapId == null) {
-      throw new IllegalArgumentException("heatmapId was null");
-    } else {
-      return heatmapId;
-    }
+    sink.setOpacity(heatmap.getOpacity());
+    sink.setRadius(heatmap.getRadius().intValue());
+    return heatmap.getHeatmapId();
   }
 
   static List<LatLng> pointsFromPigeon(List<Messages.PlatformLatLng> data) {
@@ -730,57 +793,40 @@ class Convert {
   /**
    * Converts the given object to a list of WeightedLatLng objects.
    *
-   * @param o the object to convert. The object is expected to be a List of serialized weighted
-   *     lat/lng.
+   * @param data the list of Pigeon weighted lat/lng objects to convert.
    * @return a list of WeightedLatLng objects.
    */
   @VisibleForTesting
-  static List<WeightedLatLng> toWeightedData(Object o) {
-    final List<?> data = toList(o);
+  static List<WeightedLatLng> weightedDataFromPigeon(List<Messages.PlatformWeightedLatLng> data) {
     final List<WeightedLatLng> weightedData = new ArrayList<>(data.size());
 
-    for (Object rawWeightedPoint : data) {
-      weightedData.add(toWeightedLatLng(rawWeightedPoint));
+    for (Messages.PlatformWeightedLatLng rawWeightedPoint : data) {
+      weightedData.add(weightedLatLngFromPigeon(rawWeightedPoint));
     }
     return weightedData;
   }
 
   /**
-   * Converts the given object to a Gradient object.
+   * Converts the given Pigeon gradient to a Gradient object.
    *
-   * @param o the object to convert. The object is expected to be a Map containing the gradient
-   *     options. The gradient map is expected to have the following structure:
-   *     <pre>{@code
-   * {
-   *   "colors": List<Integer>,
-   *   "startPoints": List<Float>,
-   *   "colorMapSize": Integer
-   * }
-   * }</pre>
-   *
+   * @param gradient the Pigeon gradient to convert.
    * @return a Gradient object.
    */
   @VisibleForTesting
-  static Gradient toGradient(Object o) {
-    final Map<?, ?> data = toMap(o);
-
-    final List<?> colorData = toList(data.get(HEATMAP_GRADIENT_COLORS_KEY));
-    assert colorData != null;
+  static Gradient gradientFromPigeon(Messages.PlatformHeatmapGradient gradient) {
+    final List<Messages.PlatformColor> colorData = gradient.getColors();
     final int[] colors = new int[colorData.size()];
     for (int i = 0; i < colorData.size(); i++) {
-      colors[i] = toInt(colorData.get(i));
+      colors[i] = colorData.get(i).getArgbValue().intValue();
     }
 
-    final List<?> startPointData = toList(data.get(HEATMAP_GRADIENT_START_POINTS_KEY));
-    assert startPointData != null;
+    final List<Double> startPointData = gradient.getStartPoints();
     final float[] startPoints = new float[startPointData.size()];
     for (int i = 0; i < startPointData.size(); i++) {
-      startPoints[i] = toFloat(startPointData.get(i));
+      startPoints[i] = startPointData.get(i).floatValue();
     }
 
-    final int colorMapSize = toInt(data.get(HEATMAP_GRADIENT_COLOR_MAP_SIZE_KEY));
-
-    return new Gradient(colors, startPoints, colorMapSize);
+    return new Gradient(colors, startPoints, gradient.getColorMapSize().intValue());
   }
 
   private static List<List<LatLng>> toHoles(List<List<Messages.PlatformLatLng>> data) {
@@ -849,6 +895,146 @@ class Convert {
     return new Tile(tile.getWidth().intValue(), tile.getHeight().intValue(), tile.getData());
   }
 
+  /**
+   * Set the options in the given ground overlay object to the given sink.
+   *
+   * @param groundOverlay the object expected to be a PlatformGroundOverlay containing the ground
+   *     overlay options.
+   * @param sink the GroundOverlaySink where the options will be set.
+   * @param assetManager An instance of Android's AssetManager, which provides access to any raw
+   *     asset files stored in the application's assets directory.
+   * @param density the density of the display, used to calculate pixel dimensions.
+   * @param wrapper the BitmapDescriptorFactoryWrapper to create BitmapDescriptor.
+   * @return the identifier of the ground overlay. The identifier is valid as long as the ground
+   *     overlay exists.
+   * @throws IllegalArgumentException if required fields are missing or invalid.
+   */
+  static @NonNull String interpretGroundOverlayOptions(
+      @NonNull Messages.PlatformGroundOverlay groundOverlay,
+      @NonNull GroundOverlaySink sink,
+      @NonNull AssetManager assetManager,
+      float density,
+      @NonNull BitmapDescriptorFactoryWrapper wrapper) {
+    sink.setTransparency(groundOverlay.getTransparency().floatValue());
+    sink.setZIndex(groundOverlay.getZIndex().floatValue());
+    sink.setVisible(groundOverlay.getVisible());
+    if (groundOverlay.getAnchor() != null) {
+      sink.setAnchor(
+          groundOverlay.getAnchor().getX().floatValue(),
+          groundOverlay.getAnchor().getY().floatValue());
+    }
+    sink.setBearing(groundOverlay.getBearing().floatValue());
+    sink.setClickable(groundOverlay.getClickable());
+    sink.setImage(toBitmapDescriptor(groundOverlay.getImage(), assetManager, density, wrapper));
+    if (groundOverlay.getPosition() != null) {
+      if (groundOverlay.getWidth() == null) {
+        throw new FlutterError(
+            "Invalid GroundOverlay",
+            "Width is required when using a ground overlay with a position.",
+            null);
+      }
+      sink.setPosition(
+          latLngFromPigeon(groundOverlay.getPosition()),
+          groundOverlay.getWidth().floatValue(),
+          groundOverlay.getHeight() != null ? groundOverlay.getHeight().floatValue() : null);
+    } else if (groundOverlay.getBounds() != null) {
+      sink.setPositionFromBounds(latLngBoundsFromPigeon(groundOverlay.getBounds()));
+    }
+    return groundOverlay.getGroundOverlayId();
+  }
+
+  /**
+   * Converts a GroundOverlay object to a PlatformGroundOverlay Pigeon object.
+   *
+   * @param groundOverlay the GroundOverlay object to convert.
+   * @param groundOverlayId the identifier of the GroundOverlay.
+   * @param isCreatedWithBounds indicates if the GroundOverlay was created with bounds.
+   * @return the converted PlatformGroundOverlay object.
+   */
+  static @NonNull Messages.PlatformGroundOverlay groundOverlayToPigeon(
+      @NonNull GroundOverlay groundOverlay,
+      @NonNull String groundOverlayId,
+      boolean isCreatedWithBounds) {
+
+    // Image is mandatory field on PlatformGroundOverlay (and it should be kept
+    // non-nullable), therefore image must be set for the object. The image is
+    // description either contains set of bytes, or path to asset. This info is
+    // converted to format google maps uses (BitmapDescription), and the original
+    // data is not stored on native code. Therefore placeholder image is used for
+    // the image field.
+    Messages.PlatformBitmap dummyImage =
+        new Messages.PlatformBitmap.Builder()
+            .setBitmap(
+                new Messages.PlatformBitmapBytesMap.Builder()
+                    .setByteData(new byte[] {0})
+                    .setImagePixelRatio(1.0)
+                    .setBitmapScaling(Messages.PlatformMapBitmapScaling.NONE)
+                    .build())
+            .build();
+
+    Messages.PlatformGroundOverlay.Builder builder =
+        new Messages.PlatformGroundOverlay.Builder()
+            .setGroundOverlayId(groundOverlayId)
+            .setImage(dummyImage)
+            .setWidth((double) groundOverlay.getWidth())
+            .setHeight((double) groundOverlay.getHeight())
+            .setBearing((double) groundOverlay.getBearing())
+            .setTransparency((double) groundOverlay.getTransparency())
+            .setZIndex((long) groundOverlay.getZIndex())
+            .setVisible(groundOverlay.isVisible())
+            .setClickable(groundOverlay.isClickable());
+
+    if (isCreatedWithBounds) {
+      builder.setBounds(Convert.latLngBoundsToPigeon(groundOverlay.getBounds()));
+    } else {
+      builder.setPosition(Convert.latLngToPigeon(groundOverlay.getPosition()));
+    }
+
+    builder.setAnchor(Convert.buildGroundOverlayAnchorForPigeon(groundOverlay));
+    return builder.build();
+  }
+
+  /**
+   * Builds a PlatformDoublePair representing the anchor point for a GroundOverlay.
+   *
+   * @param groundOverlay the GroundOverlay object.
+   * @return the PlatformDoublePair representing the anchor point.
+   */
+  @VisibleForTesting
+  public static @NonNull Messages.PlatformDoublePair buildGroundOverlayAnchorForPigeon(
+      @NonNull GroundOverlay groundOverlay) {
+    Messages.PlatformDoublePair.Builder anchorBuilder = new Messages.PlatformDoublePair.Builder();
+
+    // Position is overlays anchor point. Calculate normalized anchor point based on position and bounds.
+    LatLng position = groundOverlay.getPosition();
+    LatLngBounds bounds = groundOverlay.getBounds();
+
+    // Calculate normalized latitude.
+    double height = bounds.northeast.latitude - bounds.southwest.latitude;
+    double normalizedLatitude = 1.0 - ((position.latitude - bounds.southwest.latitude) / height);
+
+    // Constant for full circle degrees.
+    final double FULL_CIRCLE_DEGREES = 360.0;
+
+    // Calculate normalized longitude.
+    // For longitude, if the bounds cross the antimeridian (west > east),
+    // adjust the width accordingly.
+    double west = bounds.southwest.longitude;
+    double east = bounds.northeast.longitude;
+    double width = (west <= east) ? (east - west) : (FULL_CIRCLE_DEGREES - (west - east));
+
+    // Normalize the longitude of the anchor position relative to the western boundary.
+    // Handles cases where the ground overlay crosses the antimeridian.
+    double normalizedLongitude =
+        ((position.longitude < west ? position.longitude + FULL_CIRCLE_DEGREES : position.longitude)
+                - west)
+            / width;
+
+    anchorBuilder.setX(normalizedLongitude);
+    anchorBuilder.setY(normalizedLatitude);
+    return anchorBuilder.build();
+  }
+
   static class BitmapDescriptorFactoryWrapper {
     /**
      * Creates a BitmapDescriptor from the provided asset key using the {@link
@@ -878,6 +1064,11 @@ class Convert {
     @VisibleForTesting
     public BitmapDescriptor fromBitmap(Bitmap bitmap) {
       return BitmapDescriptorFactory.fromBitmap(bitmap);
+    }
+
+    @VisibleForTesting
+    public BitmapDescriptor fromPinConfig(PinConfig pinConfig) {
+      return BitmapDescriptorFactory.fromPinConfig(pinConfig);
     }
   }
 
